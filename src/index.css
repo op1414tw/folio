@@ -1,0 +1,200 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@import "@fontsource/cormorant-garamond/400.css";
+@import "@fontsource/cormorant-garamond/600.css";
+@import "@fontsource/cormorant-garamond/400-italic.css";
+@import "@fontsource/plus-jakarta-sans/400.css";
+@import "@fontsource/plus-jakarta-sans/500.css";
+@import "@fontsource/plus-jakarta-sans/600.css";
+@import "@fontsource/noto-serif-tc/400.css";
+@import "@fontsource/noto-serif-tc/700.css";
+@import "@fontsource/noto-sans-tc/400.css";
+@import "@fontsource/noto-sans-tc/500.css";
+@import "@fontsource/noto-sans-tc/700.css";
+@import "@fontsource/lxgw-wenkai-tc/400.css";
+@import "@fontsource/lxgw-wenkai-tc/700.css";
+@import "@fontsource/iansui/400.css";
+@import "@fontsource/huninn/400.css";
+
+@layer base {
+  :root {
+    --font-serif-editorial: "Cormorant Garamond", "Noto Serif TC", "PingFang TC", "Songti TC", "PMingLiU", Georgia, serif;
+    --font-sans-clean: "Plus Jakarta Sans", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", -apple-system, BlinkMacSystemFont, sans-serif;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --map-ocean-color: #EFECE3;
+    --map-primary-land: #DFD8C8;
+    --map-primary-stroke: #A79F8E;
+    --map-context-land: #E7E2D6;
+    --map-context-stroke: #C8C0B0;
+    --map-graticule-color: #78716C;
+    --map-text-color: #1C1917;
+    --map-label-halo: #FAF8F3;
+  }
+
+  html {
+    font-family: var(--font-sans-clean);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    overflow-x: clip;
+    scrollbar-gutter: stable;
+  }
+
+  html.dark {
+    --map-ocean-color: #151718;
+    --map-primary-land: #2A2E30;
+    --map-primary-stroke: #575B5F;
+    --map-context-land: #202325;
+    --map-context-stroke: #3A3D40;
+    --map-graticule-color: #A8A29E;
+    --map-text-color: #F5F5F4;
+    --map-label-halo: #151718;
+  }
+
+  body {
+    background-color: #F7F6F2;
+    color: #1C1917;
+    user-select: none;
+    -webkit-user-select: none;
+    overflow-x: clip;
+    overscroll-behavior-y: contain;
+    transition: background-color 0.25s cubic-bezier(0.16, 1, 0.3, 1), color 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  html.dark body {
+    background-color: #111110;
+    color: #E7E5E0;
+  }
+
+  input,
+  textarea,
+  .selectable-text {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+}
+
+.font-editorial {
+  font-family: var(--font-serif-editorial);
+}
+
+.font-ui {
+  font-family: var(--font-sans-clean);
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Custom subtle scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 113, 108, 0.25);
+  border-radius: 9999px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(168, 162, 158, 0.25);
+}
+
+/* Comfortable Reading Mode Typography & Layout */
+.reader-comfortable-prose {
+  --reader-font-size: 17px;
+  --reader-line-height: 1.95;
+  --reader-max-width: 65ch;
+  font-size: var(--reader-font-size);
+  line-height: var(--reader-line-height);
+  max-width: var(--reader-max-width);
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  text-rendering: optimizeLegibility;
+  font-kerning: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  letter-spacing: 0.015em;
+  transition: font-size 0.18s ease, line-height 0.18s ease, max-width 0.22s ease;
+}
+
+.reader-comfortable-prose.is-comfort-active p + p {
+  margin-top: 1.1em;
+}
+
+.reader-comfortable-prose h1,
+.reader-comfortable-prose h2,
+.reader-comfortable-prose h3,
+.reader-comfortable-prose h4 {
+  letter-spacing: -0.01em;
+}
+
+.reader-comfortable-prose blockquote {
+  background: rgba(239, 236, 230, 0.45);
+  border-radius: 0 0.75rem 0.75rem 0;
+  padding-right: 1rem;
+}
+
+.dark .reader-comfortable-prose blockquote {
+  background: rgba(34, 34, 32, 0.55);
+}
+
+/* Skip off-screen layout/paint to improve scroll fluidity and battery efficiency */
+.work-card-cv {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
+}
+
+@keyframes work-card-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+html.motion-overhaul body {
+  transition: background-color 0.32s cubic-bezier(0.25, 0.9, 0.35, 1), color 0.32s cubic-bezier(0.25, 0.9, 0.35, 1);
+}
+
+html.motion-overhaul .work-card-animated {
+  animation: work-card-enter 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--card-delay, 0ms);
+}
+
+html.motion-overhaul .work-card-cv {
+  transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.26s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.24s ease;
+}
+
+@media (hover: hover) {
+  html.motion-overhaul .work-card-cv:hover {
+    transform: translate3d(0, -3px, 0);
+  }
+}
+
+html.motion-overhaul .work-card-cv:active {
+  transform: scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

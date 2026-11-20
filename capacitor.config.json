@@ -1,0 +1,9 @@
+{
+  "appId": "com.folio.archive",
+  "appName": "拾光卷宗",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "android": {
+    "allowMixedContent": false
+  }
+}
