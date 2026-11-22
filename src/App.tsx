@@ -39,6 +39,7 @@ import { ArchiveFilterModal, SortOrder } from './components/ArchiveFilterModal';
 import { ArchiveLayouts } from './components/ArchiveLayouts';
 import { ArchiveStatsOverview } from './components/ArchiveStatsOverview';
 import { BatchWorkExplorerModal } from './components/BatchWorkExplorerModal';
+import { BottomSheet } from './components/BottomSheet';
 import { CollectionsManager } from './components/CollectionsManager';
 import { PdfEbookModal } from './components/PdfEbookModal';
 import { PinLockModal } from './components/PinLockModal';
@@ -65,17 +66,27 @@ import {
   sealWorkItem,
   unsealWorkItem,
 } from './services/crypto';
+import {
+  clearPinAttempts,
+  isValidPinFormat,
+  readPinAttemptState,
+  recordFailedPinAttempt,
+} from './services/pinLockout';
 import { exportCache } from './services/exportCache';
+import { useBackHandler } from './hooks/useBackHandler';
 import { isAnyModalLocked, useBodyScrollLock } from './hooks/useBodyScrollLock';
 import {
   checkIsSeeded,
   clearCollections,
   clearWorks,
+  computeNextScheduledBackupAt,
   DEFAULT_PRESET_TAGS,
   DEFAULT_SETTINGS,
   deleteCollection as dbDeleteCollection,
   deleteWork as dbDeleteWork,
   deleteWorksBatch as dbDeleteWorksBatch,
+  exportCrossPlatformZipBackup,
+  exportFullBackup,
   getAllCollections,
   getAllWorks,
   loadSettings,
@@ -85,6 +96,7 @@ import {
   saveSettings,
   saveWork,
   saveWorksBatch,
+  ScheduledBackupTimeConfig,
 } from './services/storage';
 import {
   ActiveTab,
@@ -93,6 +105,8 @@ import {
   BackupArchive,
   Collection,
   SavedShareTemplate,
+  ScheduledBackupFormat,
+  ScheduledBackupFrequency,
   WorkItem,
 } from './types';
 import {
@@ -244,7 +258,7 @@ const TAB_ORDER: ActiveTab[] = ['archive', 'collections', 'studio', 'vault'];
 const TAB_TRANSITION_VARIANTS = {
   enter: (ctx: { dir: 1 | -1; overhaul: boolean }) =>
     ctx.overhaul
-      ? { opacity: 0, x: ctx.dir * 18 }
+      ? { opacity: 0, x: ctx.dir * 10 }
       : { opacity: 1, x: 0 },
   center: (ctx: { dir: 1 | -1; overhaul: boolean }) =>
     ctx.overhaul
@@ -252,8 +266,8 @@ const TAB_TRANSITION_VARIANTS = {
           opacity: 1,
           x: 0,
           transition: {
-            x: { duration: 0.25, ease: [0.22, 1, 0.36, 1] as const },
-            opacity: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const },
+            x: { duration: 0.2, ease: [0.22, 1, 0.36, 1] as const },
+            opacity: { duration: 0.16, ease: [0.22, 1, 0.36, 1] as const },
           },
         }
       : {
@@ -265,10 +279,10 @@ const TAB_TRANSITION_VARIANTS = {
     ctx.overhaul
       ? {
           opacity: 0,
-          x: ctx.dir * -12,
+          x: ctx.dir * -8,
           transition: {
-            x: { duration: 0.12, ease: [0.4, 0, 0.7, 0.2] as const },
-            opacity: { duration: 0.11, ease: [0.4, 0, 1, 1] as const },
+            x: { duration: 0.08, ease: [0.4, 0, 0.7, 0.2] as const },
+            opacity: { duration: 0.08, ease: [0.4, 0, 1, 1] as const },
           },
         }
       : { opacity: 1, x: 0, transition: { duration: 0 } },
@@ -304,6 +318,7 @@ function AppShell() {
     queuedTasks,
     lastNotice,
     isCardExportingPriority,
+    enqueueTask,
     cancelQueuedTask,
     dismissNotice,
   } = useExportQueue();
@@ -312,6 +327,15 @@ function AppShell() {
 
   const [isSafeMode, setIsSafeMode] = useState<boolean>(() => isSafeModeActive());
   const [showCrashPrompt, setShowCrashPrompt] = useState<boolean>(false);
+  const [scheduledBackupPromptOpen, setScheduledBackupPromptOpen] = useState(false);
+  const [scheduledBackupPromptIsTest, setScheduledBackupPromptIsTest] = useState(false);
+  const handledScheduledDueRef = useRef<number | null>(null);
+
+  useBackHandler(exportPopoverOpen, () => setExportPopoverOpen(false));
+  useBackHandler(showCrashPrompt, () => {
+    dismissPendingCrashPrompt();
+    setShowCrashPrompt(false);
+  });
 
   const [ready, setReady] = useState(false);
   const [works, setWorks] = useState<WorkItem[]>([]);
@@ -372,6 +396,7 @@ function AppShell() {
 
   // Crypto / PIN Lock State
   const [aesKey, setAesKey] = useState<CryptoKey | null>(null);
+  const [appLockedOnLaunch, setAppLockedOnLaunch] = useState(false);
   const [pinModalState, setPinModalState] = useState<{
     open: boolean;
     mode: 'unlock' | 'setup' | 'verify-disable';
@@ -467,9 +492,10 @@ function AppShell() {
         if (
           loadedSettings.hasPin &&
           loadedSettings.requireLockOnLaunch &&
-          normalizedWorks.some((w) => w.isPrivate)
+          loadedSettings.pinHash &&
+          loadedSettings.pinSalt
         ) {
-          setPinModalState({ open: true, mode: 'unlock' });
+          setAppLockedOnLaunch(true);
         }
       } catch (err) {
         recordCrashIncident(err, 'uncaught_error', 'App.bootstrap');
@@ -539,6 +565,142 @@ function AppShell() {
     });
   }, []);
 
+  const latestBackupStateRef = useRef({
+    works,
+    collections,
+    settings,
+    ready,
+    appLockedOnLaunch,
+    welcomeOpen,
+  });
+  latestBackupStateRef.current = {
+    works,
+    collections,
+    settings,
+    ready,
+    appLockedOnLaunch,
+    welcomeOpen,
+  };
+
+  const getScheduleTimeConfig = useCallback(
+    (s: AppSettings): ScheduledBackupTimeConfig => ({
+      hour: s.scheduledBackupHour ?? 20,
+      minute: s.scheduledBackupMinute ?? 0,
+      weekday: s.scheduledBackupWeekday ?? 0,
+      monthDay: s.scheduledBackupMonthDay ?? 1,
+      month: s.scheduledBackupMonth ?? 1,
+    }),
+    []
+  );
+
+  const runScheduledBackupNow = useCallback(async () => {
+    const {
+      works: curWorks,
+      collections: curCols,
+      settings: curSettings,
+    } = latestBackupStateRef.current;
+    const freq: ScheduledBackupFrequency = curSettings.scheduledBackupFrequency ?? 'off';
+    const fmt: ScheduledBackupFormat = curSettings.scheduledBackupFormat ?? 'json';
+    const nextDue =
+      freq !== 'off'
+        ? computeNextScheduledBackupAt(freq, Date.now(), getScheduleTimeConfig(curSettings))
+        : undefined;
+
+    const snapshotWorks = [...curWorks];
+    const snapshotCols = [...curCols];
+    const snapshotAuthor = curSettings.authorName;
+
+    const enqueueRes = enqueueTask({
+      kind: fmt,
+      title:
+        fmt === 'zip'
+          ? `定期備份整理包 (.zip · ${snapshotWorks.length} 件)`
+          : `定期備份檔 (.json · ${snapshotWorks.length} 件)`,
+      run: async ({ onProgress, yieldAndRespectPriority }) => {
+        const res =
+          fmt === 'zip'
+            ? await exportCrossPlatformZipBackup(snapshotWorks, snapshotCols, snapshotAuthor, {
+                onProgress,
+                yieldHook: yieldAndRespectPriority,
+                preferFixedFolder: true,
+              })
+            : await exportFullBackup(snapshotWorks, snapshotCols, snapshotAuthor, {
+                onProgress,
+                yieldHook: yieldAndRespectPriority,
+                preferFixedFolder: true,
+              });
+        await updateSettings({ lastBackupAt: Date.now() });
+        const kb = Math.max(1, Math.round(res.byteSize / 1024));
+        return `定期 ${fmt.toUpperCase()} 備份完成（${kb.toLocaleString()} KB），已儲存於：${res.locationLabel}`;
+      },
+    });
+
+    if (!enqueueRes.accepted) {
+      handledScheduledDueRef.current = null;
+      return;
+    }
+
+    await updateSettings({
+      scheduledBackupNextDueAt: nextDue,
+      scheduledBackupLastAutoAt: Date.now(),
+    });
+  }, [enqueueTask, getScheduleTimeConfig, updateSettings]);
+
+  const checkScheduledBackupDue = useCallback(() => {
+    const {
+      ready: isReady,
+      appLockedOnLaunch: isLocked,
+      welcomeOpen: isWelcome,
+      settings: curSettings,
+    } = latestBackupStateRef.current;
+    if (!isReady || isLocked || isWelcome) return;
+
+    const freq: ScheduledBackupFrequency = curSettings.scheduledBackupFrequency ?? 'off';
+    const dueAt = curSettings.scheduledBackupNextDueAt;
+    if (freq === 'off' || !dueAt) {
+      handledScheduledDueRef.current = null;
+      return;
+    }
+
+    if (Date.now() < dueAt) return;
+    if (handledScheduledDueRef.current === dueAt) return;
+
+    handledScheduledDueRef.current = dueAt;
+    if (curSettings.scheduledBackupAskBeforeRun === false) {
+      void runScheduledBackupNow();
+    } else {
+      setScheduledBackupPromptIsTest(false);
+      setScheduledBackupPromptOpen(true);
+    }
+  }, [runScheduledBackupNow]);
+
+  useEffect(() => {
+    if (!ready || appLockedOnLaunch || welcomeOpen) return;
+    const timer = window.setTimeout(() => {
+      checkScheduledBackupDue();
+    }, 350);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        checkScheduledBackupDue();
+      }
+    };
+    const interval = window.setInterval(checkScheduledBackupDue, 60_000);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.clearTimeout(timer);
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [
+    ready,
+    appLockedOnLaunch,
+    welcomeOpen,
+    settings.scheduledBackupFrequency,
+    settings.scheduledBackupNextDueAt,
+    settings.scheduledBackupAskBeforeRun,
+    checkScheduledBackupDue,
+  ]);
+
   const isVaultUnlocked = !settings.hasPin || aesKey !== null;
 
   const lockVault = useCallback(async () => {
@@ -558,7 +720,9 @@ function AppShell() {
   }, [aesKey, works]);
 
   const handlePinSubmit = async (pin: string): Promise<boolean> => {
-    if (pinModalState.mode === 'setup') {
+    if (!appLockedOnLaunch && pinModalState.mode === 'setup') {
+      if (!isValidPinFormat(pin)) return false;
+      clearPinAttempts();
       const salt = generateSalt();
       const digest = await hashPin(pin, salt);
       const derived = await deriveAesKey(pin, salt);
@@ -590,15 +754,24 @@ function AppShell() {
       return true;
     }
 
-    if (!settings.pinSalt || !settings.pinHash) return false;
-    const candidate = await hashPin(pin, settings.pinSalt);
-    if (candidate !== settings.pinHash) {
+    if (readPinAttemptState().isLockedOut) {
       return false;
     }
 
+    if (!settings.pinSalt || !settings.pinHash || !isValidPinFormat(pin)) {
+      recordFailedPinAttempt();
+      return false;
+    }
+    const candidate = await hashPin(pin, settings.pinSalt);
+    if (candidate !== settings.pinHash) {
+      recordFailedPinAttempt();
+      return false;
+    }
+
+    clearPinAttempts();
     const derived = await deriveAesKey(pin, settings.pinSalt);
 
-    if (pinModalState.mode === 'verify-disable') {
+    if (!appLockedOnLaunch && pinModalState.mode === 'verify-disable') {
       // Decrypt all sealed works before removing PIN
       const unsealed = await Promise.all(works.map((w) => unsealWorkItem(w, derived)));
       await saveWorksBatch(unsealed);
@@ -614,10 +787,16 @@ function AppShell() {
       return true;
     }
 
-    // Unlock mode
+    // Unlock mode (either App launch gate or in-app vault unlock)
     setAesKey(derived);
     const unsealed = await Promise.all(works.map((w) => unsealWorkItem(w, derived)));
     setWorks(unsealed);
+
+    if (appLockedOnLaunch) {
+      setAppLockedOnLaunch(false);
+      return true;
+    }
+
     const pendingId = pinModalState.pendingWorkId;
     const nextAction = pinModalState.pendingAction;
 
@@ -1211,6 +1390,20 @@ function AppShell() {
     );
   }
 
+  if (appLockedOnLaunch) {
+    return (
+      <MotionPreferencesProvider enabled={effectiveOverhaul}>
+        <PinLockModal
+          isOpen
+          mode="unlock"
+          variant="fullscreen"
+          brandTitle={displayBrandTitle}
+          onSubmitPin={handlePinSubmit}
+        />
+      </MotionPreferencesProvider>
+    );
+  }
+
   const hasExportBarVisible = Boolean(activeTask || queuedTasks.length > 0);
 
   return (
@@ -1683,6 +1876,7 @@ function AppShell() {
             analyticsOpen ||
             pinModalState.open ||
             welcomeOpen ||
+            scheduledBackupPromptOpen ||
             Boolean(shareModalWork) ||
             exportPopoverOpen;
           if (anyModalOpen) {
@@ -1736,6 +1930,7 @@ function AppShell() {
             initial="enter"
             animate="center"
             exit="exit"
+            className="will-change-[transform,opacity]"
           >
         {activeTab === 'archive' && (
           <div className="space-y-4">
@@ -2075,6 +2270,10 @@ function AppShell() {
               remainingSeedCount={remainingSeedCount}
               onClearSeedWorks={handleClearSeedWorks}
               onOpenWelcome={() => setWelcomeOpen(true)}
+              onTestScheduledBackupPrompt={() => {
+                setScheduledBackupPromptIsTest(true);
+                setScheduledBackupPromptOpen(true);
+              }}
             />
           </TabErrorBoundary>
         )}
@@ -2357,9 +2556,146 @@ function AppShell() {
         isOpen={welcomeOpen}
         brandTitle={displayBrandTitle}
         remainingSeedCount={remainingSeedCount}
+        initialMinimalMode={isMinimalMode}
+        initialAuthorName={settings.authorName}
+        initialSealText={settings.sealText}
+        onSelectMinimalMode={(minimal) => updateSettings({ minimalMode: minimal })}
+        onSaveIdentity={({ authorName, sealText }) =>
+          updateSettings({ authorName, sealText })
+        }
         onClose={() => setWelcomeOpen(false)}
         onClearSeedWorks={handleClearSeedWorks}
       />
+
+      {/* SCHEDULED BACKUP PROMPT SHEET */}
+      <BottomSheet
+        isOpen={scheduledBackupPromptOpen}
+        onClose={() => setScheduledBackupPromptOpen(false)}
+        backdropToneClass="bg-black/50"
+        maxWidthClass="sm:max-w-md"
+        handleInsidePaddedPanel
+        panelClassName="bg-[#F7F6F2] dark:bg-[#171716] border border-stone-200 dark:border-stone-800 rounded-t-3xl sm:rounded-2xl p-5 pb-safe space-y-4 shadow-2xl"
+      >
+        {(() => {
+          const freq: ScheduledBackupFrequency = settings.scheduledBackupFrequency ?? 'off';
+          const fmt: ScheduledBackupFormat = settings.scheduledBackupFormat ?? 'json';
+          const pad2 = (n: number) => String(n).padStart(2, '0');
+          const weekdayNames = ['日', '一', '二', '三', '四', '五', '六'];
+          const timeText = `${pad2(settings.scheduledBackupHour ?? 20)}:${pad2(
+            settings.scheduledBackupMinute ?? 0
+          )}`;
+          const freqText =
+            freq === 'daily'
+              ? `每日 ${timeText}`
+              : freq === 'weekly'
+              ? `每週${weekdayNames[settings.scheduledBackupWeekday ?? 0] ?? '日'} ${timeText}`
+              : freq === 'monthly'
+              ? `每月 ${settings.scheduledBackupMonthDay ?? 1} 日 ${timeText}`
+              : freq === 'yearly'
+              ? `每年 ${settings.scheduledBackupMonth ?? 1} 月 ${
+                  settings.scheduledBackupMonthDay ?? 1
+                } 日 ${timeText}`
+              : '測試範例週期';
+          const fmtText = fmt === 'zip' ? '跨平台整理包 (.zip)' : '標準備份檔 (.json)';
+          return (
+            <>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#284152]/10 dark:bg-stone-800 text-[#284152] dark:text-[#E7E5E0] flex items-center justify-center shrink-0">
+                    <Clock className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-editorial text-lg font-semibold text-stone-900 dark:text-stone-100">
+                        定期備份時間已到
+                      </h3>
+                      {scheduledBackupPromptIsTest && (
+                        <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-800 dark:text-amber-300 text-[10px] font-semibold">
+                          模擬測試視窗
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5 leading-relaxed">
+                      {scheduledBackupPromptIsTest
+                        ? `此為開發者測試詢問窗（目前設定：${freqText} · ${fmtText}），按任一選項皆不會進行真實備份或異動正式排程。`
+                        : `已到達您設定的「${freqText}」備份週期，將以 ${fmtText} 備份目前的 ${works.length} 件作品。是否立即執行？`}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setScheduledBackupPromptOpen(false)}
+                  aria-label="關閉定期備份詢問"
+                  className="min-h-[36px] min-w-[36px] -mr-1 flex items-center justify-center rounded-full text-stone-400 hover:bg-stone-200/60 dark:hover:bg-stone-800 shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScheduledBackupPromptOpen(false);
+                    if (scheduledBackupPromptIsTest) {
+                      enqueueTask({
+                        kind: 'simulated',
+                        title: '測試 · 模擬定期備份確認',
+                        run: async ({ onProgress }) => {
+                          onProgress('模擬備份流程驗證中（無真實檔案寫入）...', 45);
+                          await new Promise<void>((resolve) => window.setTimeout(resolve, 900));
+                          onProgress('模擬驗證完成', 100);
+                          return '已完成定期備份視窗測試（未寫入任何實際檔案，亦未改動正式排程）。';
+                        },
+                      });
+                      return;
+                    }
+                    void runScheduledBackupNow();
+                  }}
+                  className="w-full min-h-[44px] px-4 rounded-xl bg-[#284152] dark:bg-[#E7E5E0] text-white dark:text-stone-900 text-xs sm:text-sm font-medium hover:opacity-90 transition-opacity"
+                >
+                  {scheduledBackupPromptIsTest ? '是，立即備份（僅測試，不輸出檔案）' : '是，立即備份'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScheduledBackupPromptOpen(false);
+                    if (scheduledBackupPromptIsTest) return;
+                    const nextDue =
+                      freq !== 'off'
+                        ? computeNextScheduledBackupAt(
+                            freq,
+                            Date.now(),
+                            getScheduleTimeConfig(settings)
+                          )
+                        : undefined;
+                    void updateSettings({ scheduledBackupNextDueAt: nextDue });
+                  }}
+                  className="w-full min-h-[42px] px-4 rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-[#1E1E1C] text-stone-800 dark:text-stone-200 text-xs font-medium hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors"
+                >
+                  略過此次，等到下次週期
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScheduledBackupPromptOpen(false);
+                    if (scheduledBackupPromptIsTest) return;
+                    void updateSettings({
+                      scheduledBackupFrequency: 'off',
+                      scheduledBackupNextDueAt: undefined,
+                    });
+                  }}
+                  className="w-full min-h-[40px] px-4 rounded-xl text-[#9E3B33] dark:text-[#E07A70] text-xs font-medium hover:bg-[#9E3B33]/10 transition-colors"
+                >
+                  停止週期備份
+                </button>
+              </div>
+            </>
+          );
+        })()}
+      </BottomSheet>
 
       {/* PIN / PRIVACY LOCK MODAL */}
       <PinLockModal

@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { Collection, WorkItem } from '../types';
 import { useMotionPreferences } from '../contexts/MotionConfigContext';
+import { useBackHandler } from '../hooks/useBackHandler';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { BottomSheet } from './BottomSheet';
 import { SlidingPill } from './SlidingPill';
@@ -93,10 +94,12 @@ export const BatchWorkExplorerModal: React.FC<BatchWorkExplorerModalProps> = ({
   onAddCustomTag,
 }) => {
   useBodyScrollLock(isOpen);
+  useBackHandler(isOpen, onClose);
   const { animationOverhaul } = useMotionPreferences();
   const [activeFolder, setActiveFolder] = useState<FolderTarget>({ kind: 'all' });
   const [expandedCols, setExpandedCols] = useState<Record<string, boolean>>({});
   const [mobileFolderDrawerOpen, setMobileFolderDrawerOpen] = useState(false);
+  useBackHandler(isOpen && mobileFolderDrawerOpen, () => setMobileFolderDrawerOpen(false));
 
   const [viewMode, setViewMode] = useState<ExplorerViewMode>('list');
   const [searchQuery, setSearchQuery] = useState('');
@@ -538,7 +541,7 @@ export const BatchWorkExplorerModal: React.FC<BatchWorkExplorerModalProps> = ({
     if (selectedWorks.length === 0) return;
     if (privateValue && !hasPin) {
       onRequestSetupPin();
-      setNotice('請先設定 4 位數隱私密碼，設定後即可批量將作品加入私密並加密保存。');
+      setNotice('請先設定 4～8 位隱私密碼，設定後即可批量將作品加入私密並加密保存。');
       return;
     }
     if (privateValue && !isVaultUnlocked) {
@@ -759,15 +762,15 @@ export const BatchWorkExplorerModal: React.FC<BatchWorkExplorerModalProps> = ({
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          initial={animationOverhaul ? { opacity: 0, y: 24 } : { opacity: 0 }}
+          initial={animationOverhaul ? { opacity: 0, y: 18 } : { opacity: 0 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={animationOverhaul ? { opacity: 0, y: 20 } : { opacity: 0 }}
+          exit={animationOverhaul ? { opacity: 0, y: 16 } : { opacity: 0 }}
           transition={
             animationOverhaul
-              ? { duration: 0.26, ease: [0.22, 1, 0.36, 1] }
+              ? { duration: 0.22, ease: [0.22, 1, 0.36, 1] }
               : { duration: 0.16 }
           }
-          className="fixed inset-0 z-50 bg-[#F7F6F2] dark:bg-[#111110] flex flex-col pt-safe"
+          className="fixed inset-0 z-50 bg-[#F7F6F2] dark:bg-[#111110] flex flex-col pt-safe will-change-[transform,opacity]"
         >
           {/* Explorer Top Header */}
           <header className="px-4 sm:px-6 h-14 border-b border-stone-200/80 dark:border-stone-800 bg-[#F7F6F2] dark:bg-[#111110] flex items-center justify-between gap-3 shrink-0">

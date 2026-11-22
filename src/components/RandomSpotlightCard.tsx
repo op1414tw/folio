@@ -63,11 +63,9 @@ export const RandomSpotlightCard: React.FC<RandomSpotlightCardProps> = ({
             <span className="font-editorial text-base font-semibold text-stone-900 dark:text-stone-100 whitespace-nowrap">
               拾光隨機
             </span>
-            {!conciseCopyMode && (
-              <span className="text-xs text-stone-500 dark:text-stone-400 truncate">
-                點擊隨機挑選一件精選作品展示
-              </span>
-            )}
+            <span className="text-xs text-stone-500 dark:text-stone-400 truncate">
+              {conciseCopyMode ? '隨機抽取精選作品' : '點擊隨機挑選一件精選作品展示'}
+            </span>
           </div>
           <div className="w-8 h-8 rounded-lg bg-white dark:bg-[#232321] border border-stone-200 dark:border-stone-700 flex items-center justify-center text-[#284152] dark:text-[#E7E5E0] shrink-0 group-hover:scale-105 transition-transform">
             <Shuffle className="w-3.5 h-3.5" />

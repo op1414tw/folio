@@ -20,6 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import { useMotionPreferences } from '../contexts/MotionConfigContext';
+import { useBackHandler } from '../hooks/useBackHandler';
 import { OFFLINE_WORLD_AND_TAIWAN_GEOJSON } from '../data/offlineMapGeo';
 import {
   getMacroRegion,
@@ -229,6 +230,7 @@ export const OfflineGeoMap: React.FC<OfflineGeoMapProps> = ({
   const [activeCluster, setActiveCluster] = useState<MarkerCluster | null>(null);
   const [activeWorkIndex, setActiveWorkIndex] = useState(0);
   const [showDrawer, setShowDrawer] = useState(false);
+  useBackHandler(showDrawer, () => setShowDrawer(false));
   const [mapDimensions, setMapDimensions] = useState({ width: 800, height: 520 });
   const [isDarkTheme, setIsDarkTheme] = useState(() =>
     typeof document !== 'undefined' ? document.documentElement.classList.contains('dark') : false

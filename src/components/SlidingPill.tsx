@@ -88,34 +88,32 @@ export const SlidingPill: React.FC<SlidingPillProps> = ({
     }
 
     let cancelled = false;
-    el.style.right = 'auto';
-    el.style.bottom = 'auto';
-    el.style.width = `${fromBox.width}px`;
-    el.style.height = `${fromBox.height}px`;
-    el.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
+    el.style.transformOrigin = 'top left';
+    el.style.willChange = 'transform';
+    const baseSx = curBox.width > 0 ? fromBox.width / curBox.width : 1;
+    const baseSy = curBox.height > 0 ? fromBox.height / curBox.height : 1;
+    el.style.transform = `translate3d(${dx}px, ${dy}px, 0) scale(${baseSx}, ${baseSy})`;
 
     const clearInlineStyles = () => {
       el.style.transform = '';
-      el.style.width = '';
-      el.style.height = '';
-      el.style.right = '';
-      el.style.bottom = '';
+      el.style.transformOrigin = '';
+      el.style.willChange = '';
     };
 
     const controls = animate(0, 1, {
       type: 'spring',
-      stiffness: 360,
-      damping: 30,
-      mass: 0.85,
+      stiffness: 380,
+      damping: 32,
+      mass: 0.8,
       onUpdate: (p) => {
         if (cancelled) return;
         const x = dx * (1 - p);
         const y = dy * (1 - p);
-        const w = Math.max(0, fromBox.width + (curBox.width - fromBox.width) * p);
-        const h = Math.max(0, fromBox.height + (curBox.height - fromBox.height) * p);
-        el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-        el.style.width = `${w}px`;
-        el.style.height = `${h}px`;
+        const w = Math.max(0.5, fromBox.width + (curBox.width - fromBox.width) * p);
+        const h = Math.max(0.5, fromBox.height + (curBox.height - fromBox.height) * p);
+        const sx = curBox.width > 0 ? w / curBox.width : 1;
+        const sy = curBox.height > 0 ? h / curBox.height : 1;
+        el.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${sx}, ${sy})`;
         entry.liveBox = {
           left: curBox.left + x,
           top: curBox.top + y,
@@ -250,14 +248,15 @@ export const SlidingNavIndicator: React.FC<SlidingNavIndicatorProps> = ({
     if (Math.abs(dx) < 0.5 && Math.abs(fromBox.width - curBox.width) < 0.5) return;
 
     let cancelled = false;
-    el.style.right = 'auto';
-    el.style.width = `${fromBox.width}px`;
-    el.style.transform = `translate3d(${dx}px, 0, 0)`;
+    el.style.transformOrigin = 'left center';
+    el.style.willChange = 'transform';
+    const baseSx = curBox.width > 0 ? fromBox.width / curBox.width : 1;
+    el.style.transform = `translate3d(${dx}px, 0, 0) scaleX(${baseSx})`;
 
     const clearInline = () => {
       el.style.transform = '';
-      el.style.width = '';
-      el.style.right = '';
+      el.style.transformOrigin = '';
+      el.style.willChange = '';
     };
 
     const controls = animate(0, 1, {
@@ -268,9 +267,9 @@ export const SlidingNavIndicator: React.FC<SlidingNavIndicatorProps> = ({
       onUpdate: (p) => {
         if (cancelled) return;
         const x = dx * (1 - p);
-        const w = Math.max(0, fromBox.width + (curBox.width - fromBox.width) * p);
-        el.style.transform = `translate3d(${x}px, 0, 0)`;
-        el.style.width = `${w}px`;
+        const w = Math.max(0.5, fromBox.width + (curBox.width - fromBox.width) * p);
+        const sx = curBox.width > 0 ? w / curBox.width : 1;
+        el.style.transform = `translate3d(${x}px, 0, 0) scaleX(${sx})`;
         entry.liveBox = {
           ...curBox,
           left: curBox.left + x,

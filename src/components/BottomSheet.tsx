@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { useMotionPreferences } from '../contexts/MotionConfigContext';
+import { useBackHandler } from '../hooks/useBackHandler';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 
 interface BottomSheetProps {
@@ -32,6 +33,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
   children,
 }) => {
   useBodyScrollLock(isOpen);
+  useBackHandler(isOpen && Boolean(onClose), onClose);
   const { animationOverhaul } = useMotionPreferences();
 
   const backdropRef = useRef<HTMLDivElement | null>(null);
@@ -234,31 +236,27 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
               ref={panelRef}
               initial={
                 isMobile
-                  ? animationOverhaul
-                    ? { y: '100%', opacity: 0.96 }
-                    : { y: '100%' }
+                  ? { y: '100%' }
                   : animationOverhaul
-                  ? { opacity: 0, y: 36, scale: 0.97 }
-                  : { opacity: 0, y: 24, scale: 0.985 }
+                  ? { opacity: 0, y: 28, scale: 0.975 }
+                  : { opacity: 0, y: 20, scale: 0.985 }
               }
               animate={
                 isMobile
-                  ? { y: 0, opacity: 1 }
+                  ? { y: 0 }
                   : { opacity: 1, y: 0, scale: 1 }
               }
               exit={
                 isMobile
-                  ? animationOverhaul
-                    ? { y: '100%', opacity: 0.92 }
-                    : { y: '100%', opacity: 0.94 }
+                  ? { y: '100%' }
                   : animationOverhaul
-                  ? { opacity: 0, y: 32, scale: 0.97 }
-                  : { opacity: 0, y: 28, scale: 0.985 }
+                  ? { opacity: 0, y: 24, scale: 0.975 }
+                  : { opacity: 0, y: 20, scale: 0.985 }
               }
               transition={
                 animationOverhaul
-                  ? { duration: 0.28, ease: [0.22, 1, 0.36, 1] }
-                  : { duration: 0.22, ease: [0.16, 1, 0.3, 1] }
+                  ? { duration: 0.24, ease: [0.22, 1, 0.36, 1] }
+                  : { duration: 0.2, ease: [0.16, 1, 0.3, 1] }
               }
               data-no-swipe="true"
               className={`w-full overscroll-contain will-change-transform ${panelClassName}`}

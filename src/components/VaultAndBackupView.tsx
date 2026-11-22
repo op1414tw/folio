@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import {
   BookOpen,
   Camera,
@@ -11,6 +12,7 @@ import {
   Feather,
   FlaskConical,
   FolderArchive,
+  FolderOpen,
   HardDrive,
   Lock,
   Moon,
@@ -29,6 +31,7 @@ import {
 } from 'lucide-react';
 import { MAX_EXPORT_QUEUE_SIZE, useExportQueue } from '../contexts/ExportQueueContext';
 import { useMotionPreferences } from '../contexts/MotionConfigContext';
+import { useBackHandler } from '../hooks/useBackHandler';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { BottomSheet } from './BottomSheet';
@@ -36,16 +39,24 @@ import { SlidingPill } from './SlidingPill';
 import { SmoothCollapse } from './SmoothCollapse';
 import { exportCache } from '../services/exportCache';
 import {
+  clearFixedBackupDirectory,
+  computeNextScheduledBackupAt,
   DEFAULT_PRESET_TAGS,
   exportCrossPlatformZipBackup,
   exportFullBackup,
+  getFixedBackupDirectoryName,
+  isDirectoryPickerSupported,
   parseBackupFile,
+  pickFixedBackupDirectory,
+  ScheduledBackupTimeConfig,
 } from '../services/storage';
 import {
   AddButtonPosition,
   AppSettings,
   BackupArchive,
   Collection,
+  ScheduledBackupFormat,
+  ScheduledBackupFrequency,
   WorkItem,
   WorkType,
 } from '../types';
@@ -82,6 +93,7 @@ interface VaultAndBackupViewProps {
   remainingSeedCount: number;
   onClearSeedWorks: () => Promise<void>;
   onOpenWelcome: () => void;
+  onTestScheduledBackupPrompt?: () => void;
 }
 
 export const VaultAndBackupView: React.FC<VaultAndBackupViewProps> = ({
@@ -99,6 +111,7 @@ export const VaultAndBackupView: React.FC<VaultAndBackupViewProps> = ({
   remainingSeedCount,
   onClearSeedWorks,
   onOpenWelcome,
+  onTestScheduledBackupPrompt,
 }) => {
   const {
     activeTask,
@@ -110,9 +123,14 @@ export const VaultAndBackupView: React.FC<VaultAndBackupViewProps> = ({
   } = useExportQueue();
 
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [fixedFolderName, setFixedFolderName] = useState<string | null>(null);
+  const [pickingFolder, setPickingFolder] = useState(false);
+  const [folderPickerFeedback, setFolderPickerFeedback] = useState<string | null>(null);
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSInstallGuide, setShowIOSInstallGuide] = useState(false);
   useBodyScrollLock(showIOSInstallGuide);
+  useBackHandler(showIOSInstallGuide, () => setShowIOSInstallGuide(false));
   const [confirmClearSeed, setConfirmClearSeed] = useState(false);
   const [clearingSeed, setClearingSeed] = useState(false);
   const [backupFeedback, setBackupFeedback] = useState<{
@@ -170,6 +188,16 @@ export const VaultAndBackupView: React.FC<VaultAndBackupViewProps> = ({
       });
     }
   }, [lastNotice, lastSubmittedAt]);
+
+  useEffect(() => {
+    if (!scheduleModalOpen || Capacitor.isNativePlatform() || !isDirectoryPickerSupported()) {
+      return;
+    }
+    setFolderPickerFeedback(null);
+    void getFixedBackupDirectoryName().then((name) => {
+      setFixedFolderName(name);
+    });
+  }, [scheduleModalOpen]);
 
   const toggleSection = (
     key: 'appearance' | 'identity' | 'tags' | 'onboarding' | 'developer'
@@ -406,6 +434,59 @@ export const VaultAndBackupView: React.FC<VaultAndBackupViewProps> = ({
       })
     : '尚未執行手動備份';
 
+  const scheduledFreq: ScheduledBackupFrequency = settings.scheduledBackupFrequency ?? 'off';
+  const scheduledFormat: ScheduledBackupFormat = settings.scheduledBackupFormat ?? 'json';
+  const scheduledAskBeforeRun = settings.scheduledBackupAskBeforeRun ?? true;
+  const scheduledHour = settings.scheduledBackupHour ?? 20;
+  const scheduledMinute = settings.scheduledBackupMinute ?? 0;
+  const scheduledWeekday = settings.scheduledBackupWeekday ?? 0;
+  const scheduledMonthDay = settings.scheduledBackupMonthDay ?? 1;
+  const scheduledMonth = settings.scheduledBackupMonth ?? 1;
+
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  const weekdayShortLabels = ['日', '一', '二', '三', '四', '五', '六'];
+  const scheduledTimeText = `${pad2(scheduledHour)}:${pad2(scheduledMinute)}`;
+
+  const scheduledTimingSummary =
+    scheduledFreq === 'daily'
+      ? `每日 ${scheduledTimeText}`
+      : scheduledFreq === 'weekly'
+      ? `每週${weekdayShortLabels[scheduledWeekday] ?? '日'} ${scheduledTimeText}`
+      : scheduledFreq === 'monthly'
+      ? `每月 ${scheduledMonthDay} 日 ${scheduledTimeText}`
+      : scheduledFreq === 'yearly'
+      ? `每年 ${scheduledMonth} 月 ${scheduledMonthDay} 日 ${scheduledTimeText}`
+      : '關閉';
+
+  const updateScheduleSettings = (patch: Partial<AppSettings>) => {
+    const nextFreq: ScheduledBackupFrequency = patch.scheduledBackupFrequency ?? scheduledFreq;
+    const nextCfg: ScheduledBackupTimeConfig = {
+      hour: patch.scheduledBackupHour ?? scheduledHour,
+      minute: patch.scheduledBackupMinute ?? scheduledMinute,
+      weekday: patch.scheduledBackupWeekday ?? scheduledWeekday,
+      monthDay: patch.scheduledBackupMonthDay ?? scheduledMonthDay,
+      month: patch.scheduledBackupMonth ?? scheduledMonth,
+    };
+    const nextDue =
+      nextFreq === 'off'
+        ? undefined
+        : computeNextScheduledBackupAt(nextFreq, Date.now(), nextCfg);
+    void onUpdateSettings({
+      ...patch,
+      scheduledBackupNextDueAt: nextDue,
+    });
+  };
+
+  const nextDueText =
+    scheduledFreq !== 'off' && settings.scheduledBackupNextDueAt
+      ? new Date(settings.scheduledBackupNextDueAt).toLocaleString('zh-TW', {
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : null;
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="border-b border-stone-200/80 dark:border-stone-800 pb-5 flex flex-wrap items-end justify-between gap-3">
@@ -413,11 +494,11 @@ export const VaultAndBackupView: React.FC<VaultAndBackupViewProps> = ({
           <h2 className="font-editorial text-2xl sm:text-3xl font-semibold text-stone-900 dark:text-stone-100">
             離線備份與隱私金庫
           </h2>
-          {!isConciseCopy && (
-            <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">
-              所有資料皆儲存於您的本機裝置，不依賴任何雲端帳號或網路連線。
-            </p>
-          )}
+          <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">
+            {isConciseCopy
+              ? `純本機離線儲存 · 共收錄 ${works.length} 件作品`
+              : '所有資料皆儲存於您的本機裝置，不依賴任何雲端帳號或網路連線。'}
+          </p>
         </div>
         {isMinimalMode && (
           <button
@@ -452,28 +533,65 @@ export const VaultAndBackupView: React.FC<VaultAndBackupViewProps> = ({
         </div>
       )}
 
-      {/* Offline Backup Card (2 Clean Buttons: 匯出 & 備份 / 匯入) */}
+      {/* Offline Backup Card (2 Clean Buttons: 匯出 & 備份 / 匯入 + Top-Right Clock Schedule Trigger) */}
       <section className="p-5 sm:p-6 rounded-2xl bg-white dark:bg-[#191918] border border-stone-200/80 dark:border-stone-800 space-y-4">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#EFECE6] dark:bg-[#222220] flex items-center justify-center text-stone-700 dark:text-stone-300 shrink-0">
-            <HardDrive className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="font-editorial text-xl font-semibold text-stone-900 dark:text-stone-100">
-              {isConciseCopy ? '離線備份與還原' : '跨平台離線備份系統（PC / 手機通用）'}
-            </h3>
-            {!isConciseCopy && (
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-[#EFECE6] dark:bg-[#222220] flex items-center justify-center text-stone-700 dark:text-stone-300 shrink-0">
+              <HardDrive className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="font-editorial text-xl font-semibold text-stone-900 dark:text-stone-100">
+                {isConciseCopy ? '離線備份與還原' : '跨平台離線備份系統（PC / 手機通用）'}
+              </h3>
               <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5 leading-relaxed">
-                {isMinimalMode
+                {isConciseCopy
+                  ? isMinimalMode
+                    ? '支援 ZIP 壓縮包與 JSON 備份還原'
+                    : '支援 ZIP 整理包 · JSON 備份 · PDF 電子讀本'
+                  : isMinimalMode
                   ? '支援匯出跨平台壓縮包與標準 JSON 備份檔，或從備份還原作品。'
                   : '支援跨平台整理壓縮包（含照片與 Markdown）、標準 JSON 備份，以及排版為離線 PDF 電子讀本。'}
               </p>
-            )}
+            </div>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setScheduleModalOpen(true)}
+            aria-label="定期備份設定"
+            title="定期備份設定"
+            className={`relative min-h-[40px] min-w-[40px] rounded-xl border flex items-center justify-center shrink-0 transition-colors ${
+              scheduledFreq !== 'off'
+                ? 'border-[#284152]/40 dark:border-stone-500 bg-[#284152]/10 dark:bg-stone-800 text-[#284152] dark:text-[#E7E5E0]'
+                : 'border-stone-200/90 dark:border-stone-800 bg-[#F7F6F2] dark:bg-[#222220] text-stone-600 dark:text-stone-300 hover:bg-stone-200/70 dark:hover:bg-stone-700/60'
+            }`}
+          >
+            <Clock className="w-[18px] h-[18px]" />
+            {scheduledFreq !== 'off' && (
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#284152] dark:bg-[#E7E5E0]" />
+            )}
+          </button>
         </div>
 
-        <div className="text-xs text-stone-500 dark:text-stone-400 tabular-nums">
-          最近一次備份：{lastBackupText}
+        <div className="space-y-1">
+          <div className="text-xs text-stone-500 dark:text-stone-400 tabular-nums">
+            最近一次備份：{lastBackupText}
+          </div>
+          {scheduledFreq !== 'off' && (
+            <div className="text-xs text-[#284152] dark:text-stone-300 tabular-nums flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span>
+                定期備份：{scheduledTimingSummary} ·{' '}
+                {scheduledFormat === 'zip' ? 'ZIP 整理包' : 'JSON 備份檔'} ·{' '}
+                {scheduledAskBeforeRun ? '開啟時詢問' : '到期自動備份'}
+              </span>
+              {nextDueText && (
+                <span className="text-stone-400 dark:text-stone-500">
+                  （下次：{nextDueText}）
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-3 pt-1">
@@ -675,11 +793,19 @@ export const VaultAndBackupView: React.FC<VaultAndBackupViewProps> = ({
               <h3 className="font-editorial text-xl font-semibold text-stone-900 dark:text-stone-100">
                 隱私加密鎖定
               </h3>
-              {!isConciseCopy && (
-                <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5 leading-relaxed">
-                  設定 4 位數密碼後，標記為「私密」的攝影與手記將使用本機 AES-GCM 加密密封保存。
-                </p>
-              )}
+              <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5 leading-relaxed tabular-nums">
+                {isConciseCopy
+                  ? !settings.hasPin
+                    ? '尚未設定密碼 · 4～8 位數 AES-GCM 本機加密'
+                    : isVaultUnlocked
+                    ? `已解鎖 · 保護 ${privateCount} 件私密作品${
+                        settings.requireLockOnLaunch ? ' · 開啟需密碼' : ''
+                      }`
+                    : `已上鎖保護 · ${privateCount} 件私密作品${
+                        settings.requireLockOnLaunch ? ' · 開啟需密碼' : ''
+                      }`
+                  : '設定 4～8 位數字密碼後，標記為「私密」的攝影與手記將使用本機 AES-GCM 加密密封保存。'}
+              </p>
               {devUnlockHint && !isMinimalMode && (
                 <p className="text-[11px] text-[#284152] dark:text-stone-300 font-medium mt-1">
                   {devUnlockHint}
@@ -697,7 +823,7 @@ export const VaultAndBackupView: React.FC<VaultAndBackupViewProps> = ({
               className="min-h-[44px] px-5 rounded-xl bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 text-xs font-medium inline-flex items-center gap-2"
             >
               <Lock className="w-4 h-4" />
-              <span>設定 4 位數隱私密碼</span>
+              <span>設定 4～8 位隱私密碼</span>
             </button>
           ) : (
             <>
@@ -743,7 +869,7 @@ export const VaultAndBackupView: React.FC<VaultAndBackupViewProps> = ({
         {settings.hasPin && (
           <label className="flex items-center justify-between pt-3 border-t border-stone-100 dark:border-stone-800 cursor-pointer min-h-[44px]">
             <span className="text-xs text-stone-700 dark:text-stone-300">
-              開啟 App 時要求先解鎖私密區域（自動上鎖保護）
+              開啟 App 需要以密碼解鎖
             </span>
             <input
               type="checkbox"
@@ -781,7 +907,7 @@ export const VaultAndBackupView: React.FC<VaultAndBackupViewProps> = ({
                     : '預設攝影作品',
                   isConciseCopy ? '簡易描述' : '',
                   isMinimalMode ? '極簡模式' : '',
-                  isAnimationOverhaul ? '動畫重塑（測試中）' : '',
+                  isAnimationOverhaul ? '動畫重塑' : '',
                 ]
                   .filter(Boolean)
                   .join(' · ')}
@@ -953,16 +1079,11 @@ export const VaultAndBackupView: React.FC<VaultAndBackupViewProps> = ({
                 </div>
               </div>
 
-              {/* Experimental Animation Overhaul (動畫重塑（測試中）) */}
+              {/* Animation Overhaul (動畫重塑) */}
               <div className="flex flex-wrap items-center justify-between gap-3 pt-3.5 border-t border-stone-100 dark:border-stone-800/80">
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-medium text-stone-800 dark:text-stone-200">
-                      動畫重塑
-                    </span>
-                    <span className="text-[11px] font-medium text-[#284152] dark:text-[#A3BFD1]">
-                      （測試中）
-                    </span>
+                  <div className="text-xs font-medium text-stone-800 dark:text-stone-200">
+                    動畫重塑
                   </div>
                   <SmoothConciseNote show={!isConciseCopy} animate={animationOverhaul}>
                     強化分頁切換、作品卡片、彈出視窗與設定面板展開的流暢過渡幅度，兼具質感與柔和阻尼感。
@@ -1895,6 +2016,27 @@ export const VaultAndBackupView: React.FC<VaultAndBackupViewProps> = ({
                   <span>創建一個無真實匯出的 10 秒匯出任務</span>
                 </button>
               </div>
+
+              {onTestScheduledBackupPrompt && (
+                <div className="p-3.5 rounded-xl bg-[#F7F6F2] dark:bg-[#222220] border border-stone-200/80 dark:border-stone-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-semibold text-stone-800 dark:text-stone-200">
+                      定期備份詢問視窗測試
+                    </div>
+                    <div className="text-[11px] text-stone-500 dark:text-stone-400">
+                      僅供測試彈窗介面與按鍵邏輯，不會建立真實備份檔或異動排程時間
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onTestScheduledBackupPrompt}
+                    className="min-h-[44px] px-4 rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-[#191918] text-stone-800 dark:text-stone-200 text-xs font-medium inline-flex items-center justify-center gap-2 hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors whitespace-nowrap shrink-0"
+                  >
+                    <Clock className="w-4 h-4 shrink-0" />
+                    <span>觸發定期備份詢問視窗（測試用）</span>
+                  </button>
+                </div>
+              )}
                 </div>
           </SmoothCollapse>
         </section>
@@ -2025,6 +2167,408 @@ export const VaultAndBackupView: React.FC<VaultAndBackupViewProps> = ({
                   </button>
                 )}
               </div>
+      </BottomSheet>
+
+      {/* Scheduled Backup Settings Modal */}
+      <BottomSheet
+        isOpen={scheduleModalOpen}
+        onClose={() => setScheduleModalOpen(false)}
+        backdropToneClass="bg-black/45"
+        maxWidthClass="sm:max-w-md"
+        handleInsidePaddedPanel
+        panelClassName="bg-[#F7F6F2] dark:bg-[#171716] border border-stone-200 dark:border-stone-800 rounded-t-3xl sm:rounded-2xl p-5 pb-safe space-y-5 shadow-2xl max-h-[88vh] overflow-y-auto overscroll-contain"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h3 className="font-editorial text-xl font-semibold text-stone-900 dark:text-stone-100">
+              定期備份設定
+            </h3>
+            <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5">
+              僅於開啟 App 且到達週期時執行，不在背景消耗電力。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setScheduleModalOpen(false)}
+            aria-label="關閉定期備份設定"
+            className="min-h-[40px] min-w-[40px] -mr-1 flex items-center justify-center rounded-full text-stone-500 hover:bg-stone-200/60 dark:hover:bg-stone-800"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* 1. Frequency */}
+        <div className="space-y-2.5">
+          <div className="text-xs font-semibold text-stone-800 dark:text-stone-200">
+            備份週期
+          </div>
+          <div className="grid grid-cols-5 gap-1 p-1 rounded-xl bg-white dark:bg-[#1E1E1C] border border-stone-200/80 dark:border-stone-800">
+            {(
+              [
+                { id: 'off', label: '關閉' },
+                { id: 'daily', label: '每日' },
+                { id: 'weekly', label: '每週' },
+                { id: 'monthly', label: '每月' },
+                { id: 'yearly', label: '每年' },
+              ] as { id: ScheduledBackupFrequency; label: string }[]
+            ).map((opt) => {
+              const active = scheduledFreq === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => updateScheduleSettings({ scheduledBackupFrequency: opt.id })}
+                  className={`relative min-h-[38px] rounded-lg text-xs font-medium inline-flex items-center justify-center transition-colors ${
+                    active
+                      ? 'text-white dark:text-stone-900'
+                      : 'text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-200'
+                  }`}
+                >
+                  {active && (
+                    <SlidingPill
+                      layoutId="vault-schedule-freq-pill"
+                      className="bg-[#284152] dark:bg-[#E7E5E0] shadow-sm rounded-lg"
+                    />
+                  )}
+                  <span className="relative z-10">{opt.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* 1b. Granular Time Picker when scheduled backup is enabled */}
+          {scheduledFreq !== 'off' && (
+            <div className="p-3.5 rounded-2xl bg-white dark:bg-[#1E1E1C] border border-stone-200/80 dark:border-stone-800 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-stone-800 dark:text-stone-200">
+                  備份執行時間
+                </span>
+                <span className="text-[11px] text-[#284152] dark:text-stone-300 font-medium tabular-nums">
+                  {scheduledTimingSummary}
+                </span>
+              </div>
+
+              {scheduledFreq === 'weekly' && (
+                <div className="space-y-1.5">
+                  <span className="block text-[11px] text-stone-500 dark:text-stone-400">
+                    星期幾執行
+                  </span>
+                  <div className="grid grid-cols-7 gap-1">
+                    {weekdayShortLabels.map((label, wd) => {
+                      const active = scheduledWeekday === wd;
+                      return (
+                        <button
+                          key={label}
+                          type="button"
+                          onClick={() => updateScheduleSettings({ scheduledBackupWeekday: wd })}
+                          className={`min-h-[36px] rounded-lg text-xs font-medium transition-colors ${
+                            active
+                              ? 'bg-[#284152] dark:bg-[#E7E5E0] text-white dark:text-stone-900'
+                              : 'bg-[#F7F6F2] dark:bg-[#252523] text-stone-600 dark:text-stone-300 hover:bg-stone-200/70 dark:hover:bg-stone-700'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {scheduledFreq === 'monthly' && (
+                <div className="space-y-1.5">
+                  <label className="block">
+                    <span className="block text-[11px] text-stone-500 dark:text-stone-400 mb-1">
+                      每月何日執行
+                    </span>
+                    <select
+                      value={scheduledMonthDay}
+                      onChange={(e) =>
+                        updateScheduleSettings({ scheduledBackupMonthDay: Number(e.target.value) })
+                      }
+                      className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#252523] border border-stone-200 dark:border-stone-800 text-xs text-stone-900 dark:text-stone-100 focus:outline-none tabular-nums"
+                    >
+                      {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                        <option key={day} value={day}>
+                          每月 {day} 日
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {scheduledMonthDay > 28 && (
+                    <p className="text-[11px] text-stone-400 dark:text-stone-500 leading-relaxed">
+                      若當月天數不足（如 2 月），將自動對齊該月最後一日。
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {scheduledFreq === 'yearly' && (
+                <div className="space-y-1.5">
+                  <span className="block text-[11px] text-stone-500 dark:text-stone-400">
+                    每年幾月幾日執行
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      aria-label="備份月份"
+                      value={scheduledMonth}
+                      onChange={(e) =>
+                        updateScheduleSettings({ scheduledBackupMonth: Number(e.target.value) })
+                      }
+                      className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#252523] border border-stone-200 dark:border-stone-800 text-xs text-stone-900 dark:text-stone-100 focus:outline-none tabular-nums"
+                    >
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                        <option key={m} value={m}>
+                          {m} 月
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      aria-label="備份日期"
+                      value={scheduledMonthDay}
+                      onChange={(e) =>
+                        updateScheduleSettings({ scheduledBackupMonthDay: Number(e.target.value) })
+                      }
+                      className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#252523] border border-stone-200 dark:border-stone-800 text-xs text-stone-900 dark:text-stone-100 focus:outline-none tabular-nums"
+                    >
+                      {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                        <option key={day} value={day}>
+                          {day} 日
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {scheduledMonth === 2 && scheduledMonthDay === 29 && (
+                    <p className="text-[11px] text-stone-400 dark:text-stone-500 leading-relaxed">
+                      非閏年 2 月將自動對齊 2 月 28 日執行。
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Hour & Minute selector (shared across Daily / Weekly / Monthly / Yearly) */}
+              <div className="space-y-1.5">
+                <span className="block text-[11px] text-stone-500 dark:text-stone-400">
+                  {scheduledFreq === 'daily' ? '每日何時執行' : '執行時刻'}
+                </span>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    aria-label="備份小時"
+                    value={scheduledHour}
+                    onChange={(e) =>
+                      updateScheduleSettings({ scheduledBackupHour: Number(e.target.value) })
+                    }
+                    className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#252523] border border-stone-200 dark:border-stone-800 text-xs text-stone-900 dark:text-stone-100 focus:outline-none tabular-nums"
+                  >
+                    {Array.from({ length: 24 }, (_, h) => (
+                      <option key={h} value={h}>
+                        {pad2(h)} 時
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="備份分鐘"
+                    value={scheduledMinute}
+                    onChange={(e) =>
+                      updateScheduleSettings({ scheduledBackupMinute: Number(e.target.value) })
+                    }
+                    className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#252523] border border-stone-200 dark:border-stone-800 text-xs text-stone-900 dark:text-stone-100 focus:outline-none tabular-nums"
+                  >
+                    {Array.from({ length: 60 }, (_, m) => (
+                      <option key={m} value={m}>
+                        {pad2(m)} 分
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 2. Backup Format */}
+        <div className="space-y-2">
+          <div className="text-xs font-semibold text-stone-800 dark:text-stone-200">
+            定期備份格式
+          </div>
+          <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-white dark:bg-[#1E1E1C] border border-stone-200/80 dark:border-stone-800">
+            {(
+              [
+                { id: 'json', label: '標準備份 (.json)' },
+                { id: 'zip', label: '跨平台整理包 (.zip)' },
+              ] as { id: ScheduledBackupFormat; label: string }[]
+            ).map((opt) => {
+              const active = scheduledFormat === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => void onUpdateSettings({ scheduledBackupFormat: opt.id })}
+                  className={`relative min-h-[38px] rounded-lg text-xs font-medium inline-flex items-center justify-center transition-colors ${
+                    active
+                      ? 'text-white dark:text-stone-900'
+                      : 'text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-200'
+                  }`}
+                >
+                  {active && (
+                    <SlidingPill
+                      layoutId="vault-schedule-fmt-pill"
+                      className="bg-[#284152] dark:bg-[#E7E5E0] shadow-sm rounded-lg"
+                    />
+                  )}
+                  <span className="relative z-10">{opt.label}</span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-stone-500 dark:text-stone-400 leading-relaxed">
+            {scheduledFormat === 'zip'
+              ? '含分類資料夾、原始 JPG/PNG 照片與 Markdown 文字檔，體積較大但便於跨裝置直接瀏覽。'
+              : '單一輕巧檔案完整保留作品、標籤與私密加密內容，匯出迅速適合高頻率定期留存。'}
+          </p>
+        </div>
+
+        {/* 3. Ask Before Backup */}
+        <div className="space-y-2.5">
+          <div className="text-xs font-semibold text-stone-800 dark:text-stone-200">
+            到達備份週期時是否詢問
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => void onUpdateSettings({ scheduledBackupAskBeforeRun: true })}
+              className={`p-3.5 rounded-2xl border text-left transition-all ${
+                scheduledAskBeforeRun
+                  ? 'border-[#284152] dark:border-[#E7E5E0] bg-white dark:bg-[#1E1E1C] ring-1 ring-[#284152]/20'
+                  : 'border-stone-200/80 dark:border-stone-800 bg-white/60 dark:bg-[#1B1B19]'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-stone-900 dark:text-stone-100">
+                  是，開啟時詢問
+                </span>
+                {scheduledAskBeforeRun && (
+                  <Check className="w-3.5 h-3.5 text-[#284152] dark:text-[#E7E5E0] shrink-0" />
+                )}
+              </div>
+              <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-1 leading-relaxed">
+                到期開啟 App 時跳出確認窗，可選立即備份、略過此次或停止定期備份。
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void onUpdateSettings({ scheduledBackupAskBeforeRun: false })}
+              className={`p-3.5 rounded-2xl border text-left transition-all ${
+                !scheduledAskBeforeRun
+                  ? 'border-[#284152] dark:border-[#E7E5E0] bg-white dark:bg-[#1E1E1C] ring-1 ring-[#284152]/20'
+                  : 'border-stone-200/80 dark:border-stone-800 bg-white/60 dark:bg-[#1B1B19]'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-stone-900 dark:text-stone-100">
+                  否，自動備份
+                </span>
+                {!scheduledAskBeforeRun && (
+                  <Check className="w-3.5 h-3.5 text-[#284152] dark:text-[#E7E5E0] shrink-0" />
+                )}
+              </div>
+              <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-1 leading-relaxed">
+                到期開啟 App 時直接背景自動備份並寫入固定資料夾。
+              </p>
+            </button>
+          </div>
+        </div>
+
+        {/* Fixed Folder Destination Info & Picker (relevant especially for auto-backup) */}
+        <div className="p-3.5 rounded-2xl bg-white dark:bg-[#1E1E1C] border border-stone-200/80 dark:border-stone-800 space-y-2.5">
+          <div className="flex items-center gap-2 text-xs font-semibold text-stone-800 dark:text-stone-200">
+            <FolderOpen className="w-4 h-4 text-[#284152] dark:text-[#E7E5E0] shrink-0" />
+            <span>固定儲存位置</span>
+          </div>
+
+          {Capacitor.isNativePlatform() ? (
+            <p className="text-[11px] text-stone-500 dark:text-stone-400 leading-relaxed">
+              備份檔將自動儲存至裝置固定資料夾：<span className="font-medium text-stone-700 dark:text-stone-200">文件/FolioBackups/</span>
+            </p>
+          ) : isDirectoryPickerSupported() ? (
+            <div className="space-y-2">
+              <p className="text-[11px] text-stone-500 dark:text-stone-400 leading-relaxed">
+                {fixedFolderName
+                  ? `目前已指定本機資料夾「${fixedFolderName}」，到期自動備份將嘗試直接寫入該目錄（若權限過期將改存瀏覽器下載資料夾）。`
+                  : '您可指定本機固定資料夾以供自動寫入；若未指定，將自動儲存至瀏覽器預設下載資料夾。'}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={pickingFolder}
+                  onClick={async () => {
+                    setPickingFolder(true);
+                    setFolderPickerFeedback(null);
+                    try {
+                      const picked = await pickFixedBackupDirectory();
+                      if (picked) {
+                        setFixedFolderName(picked.name);
+                        setFolderPickerFeedback(`已綁定資料夾「${picked.name}」`);
+                      }
+                    } catch (err) {
+                      if (err instanceof DOMException && err.name === 'AbortError') {
+                        // User cancelled picker
+                      } else {
+                        setFolderPickerFeedback('無法取得資料夾存取權限');
+                      }
+                    } finally {
+                      setPickingFolder(false);
+                    }
+                  }}
+                  className="min-h-[36px] px-3 rounded-lg bg-[#EFECE6] dark:bg-[#252523] text-xs font-medium text-stone-800 dark:text-stone-200 hover:bg-stone-200 dark:hover:bg-stone-700 transition-colors disabled:opacity-50"
+                >
+                  {pickingFolder ? '選擇中...' : fixedFolderName ? '更換固定資料夾' : '指定本機固定資料夾'}
+                </button>
+                {fixedFolderName && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await clearFixedBackupDirectory();
+                      setFixedFolderName(null);
+                      setFolderPickerFeedback('已改回瀏覽器預設下載資料夾');
+                    }}
+                    className="min-h-[36px] px-2.5 text-xs text-stone-500 hover:text-stone-800 dark:hover:text-stone-200"
+                  >
+                    清除指定
+                  </button>
+                )}
+              </div>
+              {folderPickerFeedback && (
+                <p className="text-[11px] text-[#284152] dark:text-stone-300 font-medium">
+                  {folderPickerFeedback}
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="text-[11px] text-stone-500 dark:text-stone-400 leading-relaxed">
+              備份檔將自動儲存至裝置或瀏覽器預設的下載資料夾。
+            </p>
+          )}
+        </div>
+
+        {/* Summary & Done */}
+        <div className="pt-1 flex items-center justify-between gap-3">
+          <div className="text-[11px] text-stone-500 dark:text-stone-400 tabular-nums">
+            {scheduledFreq === 'off'
+              ? '目前未啟用定期備份'
+              : nextDueText
+              ? `下次到期：${nextDueText}`
+              : '已啟用定期備份'}
+          </div>
+          <button
+            type="button"
+            onClick={() => setScheduleModalOpen(false)}
+            className="min-h-[42px] px-5 rounded-xl bg-[#284152] dark:bg-[#E7E5E0] text-white dark:text-stone-900 text-xs font-medium hover:opacity-90 transition-opacity"
+          >
+            完成設定
+          </button>
+        </div>
       </BottomSheet>
     </div>
   );

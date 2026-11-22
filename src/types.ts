@@ -92,6 +92,9 @@ export type AddButtonPosition =
   | 'nav-center'
   | 'nav-right';
 
+export type ScheduledBackupFrequency = 'off' | 'daily' | 'weekly' | 'monthly' | 'yearly';
+export type ScheduledBackupFormat = 'zip' | 'json';
+
 export interface AppSettings {
   theme: 'light' | 'dark';
   layout: LayoutMode;
@@ -111,6 +114,16 @@ export interface AppSettings {
   pinHash?: string;
   pinSalt?: string;
   lastBackupAt?: number;
+  scheduledBackupFrequency?: ScheduledBackupFrequency;
+  scheduledBackupFormat?: ScheduledBackupFormat;
+  scheduledBackupAskBeforeRun?: boolean;
+  scheduledBackupHour?: number;
+  scheduledBackupMinute?: number;
+  scheduledBackupWeekday?: number;
+  scheduledBackupMonthDay?: number;
+  scheduledBackupMonth?: number;
+  scheduledBackupNextDueAt?: number;
+  scheduledBackupLastAutoAt?: number;
   hasSeenWelcome?: boolean;
   devOptionsEnabled?: boolean;
   addButtonPosition?: AddButtonPosition;

@@ -176,16 +176,19 @@ export const ArchiveLayouts: React.FC<ArchiveLayoutsProps> = React.memo(({
       initial={
         hasMountedRef.current
           ? animationOverhaul
-            ? { opacity: 0, y: 12 }
-            : { opacity: 0, y: 4 }
+            ? layoutChangedInTab
+              ? { opacity: 0 }
+              : { opacity: 0, y: 8 }
+            : { opacity: 0 }
           : false
       }
       animate={{ opacity: 1, y: 0 }}
       transition={
         animationOverhaul
-          ? { duration: 0.25, ease: [0.25, 0.9, 0.35, 1] }
-          : { duration: 0.16, ease: [0.16, 1, 0.3, 1] }
+          ? { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
+          : { duration: 0.14, ease: [0.16, 1, 0.3, 1] }
       }
+      className="will-change-[transform,opacity]"
     >
       {layout === 'masonry' && (
         <div className="columns-1 sm:columns-2 lg:columns-3 gap-5">

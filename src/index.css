@@ -160,7 +160,7 @@
 @keyframes work-card-enter {
   from {
     opacity: 0;
-    transform: translate3d(0, 12px, 0);
+    transform: translate3d(0, 8px, 0);
   }
   to {
     opacity: 1;
@@ -169,16 +169,17 @@
 }
 
 html.motion-overhaul body {
-  transition: background-color 0.32s cubic-bezier(0.25, 0.9, 0.35, 1), color 0.32s cubic-bezier(0.25, 0.9, 0.35, 1);
+  transition: background-color 0.28s cubic-bezier(0.25, 0.9, 0.35, 1), color 0.28s cubic-bezier(0.25, 0.9, 0.35, 1);
 }
 
 html.motion-overhaul .work-card-animated {
-  animation: work-card-enter 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: work-card-enter 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
   animation-delay: var(--card-delay, 0ms);
+  will-change: transform, opacity;
 }
 
 html.motion-overhaul .work-card-cv {
-  transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.26s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.24s ease;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @media (hover: hover) {
@@ -188,7 +189,7 @@ html.motion-overhaul .work-card-cv {
 }
 
 html.motion-overhaul .work-card-cv:active {
-  transform: scale(0.98);
+  transform: scale(0.985);
 }
 
 @media (prefers-reduced-motion: reduce) {

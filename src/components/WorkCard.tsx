@@ -24,7 +24,7 @@ export const WorkCard: React.FC<WorkCardProps> = React.memo(({
   const [imgError, setImgError] = useState(false);
   const animClass = animateEntrance ? 'work-card-animated' : '';
   const animStyle = animateEntrance
-    ? ({ '--card-delay': `${Math.min(index, 9) * 28}ms` } as React.CSSProperties)
+    ? ({ '--card-delay': `${Math.min(index, 5) * 20}ms` } as React.CSSProperties)
     : undefined;
 
   const isLocked = work.isPrivate && work.isSealed;

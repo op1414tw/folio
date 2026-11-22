@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { useExportQueue } from '../contexts/ExportQueueContext';
 import { useMotionPreferences } from '../contexts/MotionConfigContext';
+import { useBackHandler } from '../hooks/useBackHandler';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { BottomSheet } from './BottomSheet';
 import { SlidingPill } from './SlidingPill';
@@ -2555,6 +2556,7 @@ export const ShareCardStudio: React.FC<ShareCardStudioProps> = ({
 }) => {
   const { animationOverhaul } = useMotionPreferences();
   useBodyScrollLock(Boolean(isModal));
+  useBackHandler(Boolean(isModal && onClose), onClose);
 
   const unlockedWorks = useMemo(
     () => works.filter((w) => !(w.isPrivate && w.isSealed)),
@@ -3237,11 +3239,11 @@ export const ShareCardStudio: React.FC<ShareCardStudioProps> = ({
               <h2 className="font-editorial text-2xl sm:text-3xl font-semibold text-stone-900 dark:text-stone-100">
                 分享圖卡工作室
               </h2>
-              {!conciseCopyMode && (
-                <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">
-                  支援單張精選節錄與長文多圖自動分頁生成，可挑選特定段落或手寫字體排版。
-                </p>
-              )}
+              <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">
+                {conciseCopyMode
+                  ? '單張節錄 · 長文多圖自動分頁排版'
+                  : '支援單張精選節錄與長文多圖自動分頁生成，可挑選特定段落或手寫字體排版。'}
+              </p>
             </div>
             <button
               type="button"

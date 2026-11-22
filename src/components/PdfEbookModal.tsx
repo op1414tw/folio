@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { MAX_EXPORT_QUEUE_SIZE, useExportQueue } from '../contexts/ExportQueueContext';
 import { useMotionPreferences } from '../contexts/MotionConfigContext';
+import { useBackHandler } from '../hooks/useBackHandler';
 import {
   exportWorksAsPdfEbook,
   PdfFontStyle,
@@ -81,6 +82,7 @@ export const PdfEbookModal: React.FC<PdfEbookModalProps> = ({
 
   // Unobtrusive work ordering & collection/subcategory grouping sub-page state
   const [showOrderSubPage, setShowOrderSubPage] = useState(false);
+  useBackHandler(isOpen && showOrderSubPage, () => setShowOrderSubPage(false));
   const [groupByCollection, setGroupByCollection] = useState(false);
   const [groupSubcategoriesInCollection, setGroupSubcategoriesInCollection] = useState(false);
   const [customFlatOrderIds, setCustomFlatOrderIds] = useState<string[]>([]);

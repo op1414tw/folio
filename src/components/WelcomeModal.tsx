@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft,
@@ -8,6 +8,7 @@ import {
   Check,
   Feather,
   FolderArchive,
+  Layers,
   Lock,
   Sparkles,
   Trash2,
@@ -18,6 +19,11 @@ interface WelcomeModalProps {
   isOpen: boolean;
   brandTitle: string;
   remainingSeedCount: number;
+  initialMinimalMode?: boolean;
+  initialAuthorName?: string;
+  initialSealText?: string;
+  onSelectMinimalMode?: (minimal: boolean) => void | Promise<void>;
+  onSaveIdentity?: (identity: { authorName: string; sealText: string }) => void | Promise<void>;
   onClose: () => void;
   onClearSeedWorks: () => Promise<void>;
 }
@@ -26,21 +32,62 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
   isOpen,
   brandTitle,
   remainingSeedCount,
+  initialMinimalMode = false,
+  initialAuthorName = '林硯',
+  initialSealText = '硯',
+  onSelectMinimalMode,
+  onSaveIdentity,
   onClose,
   onClearSeedWorks,
 }) => {
   const [step, setStep] = useState(0);
   const [clearChoice, setClearChoice] = useState<'keep' | 'clear'>('keep');
+  const [modeChoice, setModeChoice] = useState<'normal' | 'minimal'>(
+    initialMinimalMode ? 'minimal' : 'normal'
+  );
+  const [identityChoice, setIdentityChoice] = useState<'default' | 'custom'>('default');
+  const [authorDraft, setAuthorDraft] = useState(initialAuthorName);
+  const [sealDraft, setSealDraft] = useState(initialSealText);
   const [clearing, setClearing] = useState(false);
 
+  useEffect(() => {
+    if (isOpen) {
+      setStep(0);
+      setModeChoice(initialMinimalMode ? 'minimal' : 'normal');
+      setIdentityChoice('default');
+      setAuthorDraft(initialAuthorName || '林硯');
+      setSealDraft(initialSealText || '硯');
+    }
+  }, [isOpen, initialMinimalMode, initialAuthorName, initialSealText]);
+
+  const stepIndices = modeChoice === 'normal' ? [0, 1, 2, 3, 4] : [0, 1, 2, 3];
+  const lastStepIndex = stepIndices[stepIndices.length - 1];
+
+  useEffect(() => {
+    if (modeChoice === 'minimal' && step > 3) {
+      setStep(3);
+    }
+  }, [modeChoice, step]);
+
   const handleFinish = async () => {
-    if (clearChoice === 'clear' && remainingSeedCount > 0) {
-      setClearing(true);
-      try {
-        await onClearSeedWorks();
-      } finally {
-        setClearing(false);
+    setClearing(true);
+    try {
+      if (onSelectMinimalMode) {
+        await onSelectMinimalMode(modeChoice === 'minimal');
       }
+      if (modeChoice === 'normal' && identityChoice === 'custom' && onSaveIdentity) {
+        const cleanedAuthor = authorDraft.trim() || initialAuthorName || '林硯';
+        const cleanedSeal = sealDraft.trim().slice(0, 2) || initialSealText || '硯';
+        await onSaveIdentity({
+          authorName: cleanedAuthor,
+          sealText: cleanedSeal,
+        });
+      }
+      if (clearChoice === 'clear' && remainingSeedCount > 0) {
+        await onClearSeedWorks();
+      }
+    } finally {
+      setClearing(false);
     }
     setStep(0);
     onClose();
@@ -50,6 +97,9 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
     setStep(0);
     onClose();
   };
+
+  const previewAuthor = authorDraft.trim() || initialAuthorName || '林硯';
+  const previewSeal = sealDraft.trim().slice(0, 2) || initialSealText || '硯';
 
   return (
     <BottomSheet
@@ -64,7 +114,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
             {/* Top Bar */}
             <div className="px-6 pt-5 pb-3 flex items-center justify-between">
               <div className="flex items-center gap-1.5">
-                {[0, 1, 2].map((idx) => (
+                {stepIndices.map((idx) => (
                   <button
                     key={idx}
                     type="button"
@@ -181,7 +231,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
                           <span className="font-semibold text-stone-900 dark:text-stone-100">
                             AES-GCM 隱私加密鎖：
                           </span>
-                          設定 4 位數密碼即可將私密手稿與影像於本機加密封存，不經過任何外部伺服器。
+                          設定 4～8 位數字密碼即可將私密手稿與影像於本機加密封存，不經過任何外部伺服器。
                         </div>
                       </div>
 
@@ -209,7 +259,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
                   >
                     <div className="space-y-2">
                       <p className="text-xs font-medium tracking-wider text-[#9E3B33] dark:text-[#E07A70]">
-                        準備就緒
+                        初始典藏範例
                       </p>
                       <h2 className="font-editorial text-2xl sm:text-3xl font-semibold text-stone-900 dark:text-stone-100 leading-snug text-balance">
                         選擇您的初始典藏狀態
@@ -289,6 +339,222 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
                     )}
                   </motion.div>
                 )}
+
+                {step === 3 && (
+                  <motion.div
+                    key="step-3"
+                    initial={{ opacity: 0, x: 14 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -14 }}
+                    transition={{ duration: 0.18 }}
+                    className="space-y-5"
+                  >
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium tracking-wider text-[#9E3B33] dark:text-[#E07A70]">
+                        {modeChoice === 'minimal' ? '準備就緒 · 最後一步' : '操作模式偏好'}
+                      </p>
+                      <h2 className="font-editorial text-2xl sm:text-3xl font-semibold text-stone-900 dark:text-stone-100 leading-snug text-balance">
+                        選擇您的操作模式
+                      </h2>
+                      <p className="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">
+                        依照您的創作習慣選擇介面呈現方式，未來隨時都能於「備份與隱私」設定頁面中切換。
+                      </p>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setModeChoice('normal')}
+                        className={`w-full p-4 rounded-2xl border text-left flex items-start gap-3 transition-all ${
+                          modeChoice === 'normal'
+                            ? 'border-[#284152] dark:border-[#E7E5E0] bg-white dark:bg-[#1E1E1C] ring-1 ring-[#284152]/20'
+                            : 'border-stone-200/80 dark:border-stone-800 bg-white/60 dark:bg-[#1B1B19]'
+                        }`}
+                      >
+                        <div
+                          className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${
+                            modeChoice === 'normal'
+                              ? 'bg-[#284152] dark:bg-[#E7E5E0] border-[#284152] dark:border-[#E7E5E0] text-white dark:text-stone-900'
+                              : 'border-stone-300 dark:border-stone-600'
+                          }`}
+                        >
+                          {modeChoice === 'normal' && <Layers className="w-3 h-3" />}
+                        </div>
+                        <div>
+                          <div className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+                            普通模式（完整功能）
+                          </div>
+                          <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5 leading-relaxed">
+                            開放所有功能模組：作品集整理、統計圖表、地理分佈、分享圖卡工作室及 PDF 電子讀本匯出。
+                          </p>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setModeChoice('minimal')}
+                        className={`w-full p-4 rounded-2xl border text-left flex items-start gap-3 transition-all ${
+                          modeChoice === 'minimal'
+                            ? 'border-[#284152] dark:border-[#E7E5E0] bg-white dark:bg-[#1E1E1C] ring-1 ring-[#284152]/20'
+                            : 'border-stone-200/80 dark:border-stone-800 bg-white/60 dark:bg-[#1B1B19]'
+                        }`}
+                      >
+                        <div
+                          className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${
+                            modeChoice === 'minimal'
+                              ? 'bg-[#284152] dark:bg-[#E7E5E0] border-[#284152] dark:border-[#E7E5E0] text-white dark:text-stone-900'
+                              : 'border-stone-300 dark:border-stone-600'
+                          }`}
+                        >
+                          {modeChoice === 'minimal' && <Feather className="w-3 h-3" />}
+                        </div>
+                        <div>
+                          <div className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+                            極簡模式（純粹專注）
+                          </div>
+                          <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5 leading-relaxed">
+                            僅保留作品典藏瀏覽、閱讀撰寫、私密鎖定與離線備份，隱藏複雜工具讓畫面純淨無干擾。
+                          </p>
+                        </div>
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+
+                {step === 4 && modeChoice === 'normal' && (
+                  <motion.div
+                    key="step-4"
+                    initial={{ opacity: 0, x: 14 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -14 }}
+                    transition={{ duration: 0.18 }}
+                    className="space-y-4"
+                  >
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium tracking-wider text-[#9E3B33] dark:text-[#E07A70]">
+                        準備就緒 · 最後一步
+                      </p>
+                      <h2 className="font-editorial text-2xl sm:text-3xl font-semibold text-stone-900 dark:text-stone-100 leading-snug text-balance">
+                        是否設定署名與印章文字？
+                      </h2>
+                      <p className="text-sm text-stone-600 dark:text-stone-400 leading-relaxed">
+                        個人署名與紅色方印會顯示在作品落款、分享圖卡與 PDF 電子讀本封面，之後隨時可於設定修改。
+                      </p>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setIdentityChoice('default')}
+                        className={`w-full p-4 rounded-2xl border text-left flex items-start gap-3 transition-all ${
+                          identityChoice === 'default'
+                            ? 'border-[#284152] dark:border-[#E7E5E0] bg-white dark:bg-[#1E1E1C] ring-1 ring-[#284152]/20'
+                            : 'border-stone-200/80 dark:border-stone-800 bg-white/60 dark:bg-[#1B1B19]'
+                        }`}
+                      >
+                        <div
+                          className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${
+                            identityChoice === 'default'
+                              ? 'bg-[#284152] dark:bg-[#E7E5E0] border-[#284152] dark:border-[#E7E5E0] text-white dark:text-stone-900'
+                              : 'border-stone-300 dark:border-stone-600'
+                          }`}
+                        >
+                          {identityChoice === 'default' && <Check className="w-3 h-3" />}
+                        </div>
+                        <div>
+                          <div className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+                            暫不設定，先使用預設落款
+                          </div>
+                          <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5 leading-relaxed">
+                            維持目前預設：署名「{initialAuthorName || '林硯'}」 · 印章「
+                            {initialSealText || '硯'}」。
+                          </p>
+                        </div>
+                      </button>
+
+                      <div
+                        className={`rounded-2xl border transition-all overflow-hidden ${
+                          identityChoice === 'custom'
+                            ? 'border-[#284152] dark:border-[#E7E5E0] bg-white dark:bg-[#1E1E1C] ring-1 ring-[#284152]/20'
+                            : 'border-stone-200/80 dark:border-stone-800 bg-white/60 dark:bg-[#1B1B19]'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setIdentityChoice('custom')}
+                          className="w-full p-4 text-left flex items-start gap-3"
+                        >
+                          <div
+                            className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${
+                              identityChoice === 'custom'
+                                ? 'bg-[#284152] dark:bg-[#E7E5E0] border-[#284152] dark:border-[#E7E5E0] text-white dark:text-stone-900'
+                                : 'border-stone-300 dark:border-stone-600'
+                            }`}
+                          >
+                            {identityChoice === 'custom' && <Check className="w-3 h-3" />}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+                              要，現在自訂我的署名與印章
+                            </div>
+                            <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5 leading-relaxed">
+                              為每張圖卡與手稿落款印上專屬名字與紅印。
+                            </p>
+                          </div>
+                        </button>
+
+                        {identityChoice === 'custom' && (
+                          <div className="px-4 pb-4 pt-2 border-t border-stone-100 dark:border-stone-800 space-y-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <label className="block">
+                                <span className="block text-[11px] font-medium text-stone-600 dark:text-stone-400 mb-1">
+                                  作者署名
+                                </span>
+                                <input
+                                  type="text"
+                                  maxLength={20}
+                                  value={authorDraft}
+                                  onChange={(e) => setAuthorDraft(e.target.value)}
+                                  placeholder="例：林硯"
+                                  className="w-full min-h-[40px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#222220] border border-stone-200 dark:border-stone-800 text-xs text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-[#284152]/20"
+                                />
+                              </label>
+
+                              <label className="block">
+                                <span className="block text-[11px] font-medium text-stone-600 dark:text-stone-400 mb-1">
+                                  印章文字（1～2 字）
+                                </span>
+                                <input
+                                  type="text"
+                                  maxLength={2}
+                                  value={sealDraft}
+                                  onChange={(e) => setSealDraft(e.target.value)}
+                                  placeholder="例：硯"
+                                  className="w-full min-h-[40px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#222220] border border-stone-200 dark:border-stone-800 text-xs text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-[#284152]/20"
+                                />
+                              </label>
+                            </div>
+
+                            {/* Live Seal & Signature Preview */}
+                            <div className="p-3 rounded-xl bg-[#F7F6F2] dark:bg-[#222220] border border-stone-200/70 dark:border-stone-800 flex items-center justify-between gap-3">
+                              <span className="text-[11px] text-stone-500 dark:text-stone-400">
+                                落款預覽
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className="font-editorial text-sm font-medium text-stone-800 dark:text-stone-200">
+                                  {previewAuthor}
+                                </span>
+                                <span className="w-7 h-7 rounded border-2 border-[#9E3B33] text-[#9E3B33] font-editorial text-xs font-bold flex items-center justify-center leading-none">
+                                  {previewSeal}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
               </AnimatePresence>
             </div>
 
@@ -297,23 +563,25 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
               {step > 0 ? (
                 <button
                   type="button"
-                  onClick={() => setStep((s) => s - 1)}
+                  onClick={() => setStep((s) => Math.max(0, s - 1))}
                   className="min-h-[42px] px-3.5 rounded-xl text-xs font-medium text-stone-600 dark:text-stone-300 hover:bg-stone-200/60 dark:hover:bg-stone-800 inline-flex items-center gap-1"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
                   <span>上一步</span>
                 </button>
               ) : (
-                <span className="text-[11px] text-stone-400">1 / 3</span>
+                <span className="text-[11px] text-stone-400 tabular-nums">
+                  1 / {stepIndices.length}
+                </span>
               )}
 
-              {step < 2 ? (
+              {step < lastStepIndex ? (
                 <button
                   type="button"
-                  onClick={() => setStep((s) => s + 1)}
+                  onClick={() => setStep((s) => Math.min(lastStepIndex, s + 1))}
                   className="min-h-[42px] px-5 rounded-xl bg-[#284152] dark:bg-[#E7E5E0] text-white dark:text-stone-900 text-xs font-medium inline-flex items-center gap-1.5"
                 >
-                  <span>下一步</span>
+                  <span>{step === 3 && modeChoice === 'normal' ? '繼續' : '下一步'}</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               ) : (
@@ -329,7 +597,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
                 >
                   <span>
                     {clearing
-                      ? '清除中...'
+                      ? '設定中...'
                       : clearChoice === 'clear' && remainingSeedCount > 0
                       ? '清除範例並進入'
                       : '進入拾光卷宗'}

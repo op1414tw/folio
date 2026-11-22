@@ -13,6 +13,7 @@ import {
   Tag,
 } from 'lucide-react';
 import { useMotionPreferences } from '../contexts/MotionConfigContext';
+import { useBackHandler } from '../hooks/useBackHandler';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { Collection, WorkItem } from '../types';
 import { SlidingPill } from './SlidingPill';
@@ -92,6 +93,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
   conciseCopyMode = false,
 }) => {
   useBodyScrollLock(isOpen);
+  useBackHandler(isOpen, onClose);
   const { animationOverhaul } = useMotionPreferences();
 
   const [expanded, setExpanded] = useState<Record<SectionKey, boolean>>({
@@ -512,7 +514,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
           exit={panelVariants.exit}
           transition={panelVariants.transition}
           data-no-swipe="true"
-          className="fixed inset-0 z-50 bg-[#F7F6F2] dark:bg-[#111110] flex flex-col pt-safe"
+          className="fixed inset-0 z-50 bg-[#F7F6F2] dark:bg-[#111110] flex flex-col pt-safe will-change-[transform,opacity]"
         >
           {/* Sticky Top Bar */}
           <header className="px-4 sm:px-6 h-14 border-b border-stone-200/80 dark:border-stone-800 bg-[#F7F6F2] dark:bg-[#111110] flex items-center justify-between gap-3 shrink-0">

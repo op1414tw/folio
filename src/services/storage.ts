@@ -2,7 +2,13 @@ import { Capacitor } from '@capacitor/core';
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
 import { Preferences } from '@capacitor/preferences';
 import JSZip from 'jszip';
-import { AppSettings, BackupArchive, Collection, WorkItem } from '../types';
+import {
+  AppSettings,
+  BackupArchive,
+  Collection,
+  ScheduledBackupFrequency,
+  WorkItem,
+} from '../types';
 import { exportCache } from './exportCache';
 
 async function ensureNativeDocumentsWritePermission(): Promise<void> {
@@ -60,6 +66,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   conciseCopyMode: false,
   minimalMode: false,
   animationOverhaul: false,
+  scheduledBackupFrequency: 'off',
+  scheduledBackupFormat: 'json',
+  scheduledBackupAskBeforeRun: true,
+  scheduledBackupHour: 20,
+  scheduledBackupMinute: 0,
+  scheduledBackupWeekday: 0,
+  scheduledBackupMonthDay: 1,
+  scheduledBackupMonth: 1,
 };
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -250,18 +264,24 @@ export async function loadSettings(): Promise<AppSettings> {
   return DEFAULT_SETTINGS;
 }
 
-export async function saveSettings(settings: AppSettings): Promise<void> {
+let settingsWriteChain: Promise<void> = Promise.resolve();
+
+export function saveSettings(settings: AppSettings): Promise<void> {
   const serialized = JSON.stringify(settings);
-  try {
-    await Preferences.set({ key: SETTINGS_KEY, value: serialized });
-  } catch {
-    // Fallback
-  }
-  try {
-    localStorage.setItem(SETTINGS_KEY, serialized);
-  } catch {
-    // Ignore storage quota issues
-  }
+  const runWrite = async () => {
+    try {
+      await Preferences.set({ key: SETTINGS_KEY, value: serialized });
+    } catch {
+      // Fallback
+    }
+    try {
+      localStorage.setItem(SETTINGS_KEY, serialized);
+    } catch {
+      // Ignore storage quota issues
+    }
+  };
+  settingsWriteChain = settingsWriteChain.then(runWrite, runWrite);
+  return settingsWriteChain;
 }
 
 export async function checkIsSeeded(): Promise<boolean> {
@@ -408,9 +428,221 @@ function buildOfflineHtmlCatalog(
 </html>`;
 }
 
+export interface ScheduledBackupTimeConfig {
+  hour?: number;
+  minute?: number;
+  weekday?: number; // 0 = Sun .. 6 = Sat
+  monthDay?: number; // 1..31
+  month?: number; // 1..12
+}
+
+function getDaysInMonth(year: number, monthZeroBased: number): number {
+  return new Date(year, monthZeroBased + 1, 0).getDate();
+}
+
+export function computeNextScheduledBackupAt(
+  frequency: ScheduledBackupFrequency,
+  fromMs = Date.now(),
+  schedule?: ScheduledBackupTimeConfig
+): number | undefined {
+  if (frequency === 'off') return undefined;
+
+  const hour = Math.min(23, Math.max(0, Math.floor(schedule?.hour ?? 20)));
+  const minute = Math.min(59, Math.max(0, Math.floor(schedule?.minute ?? 0)));
+  const weekday = Math.min(6, Math.max(0, Math.floor(schedule?.weekday ?? 0)));
+  const monthDay = Math.min(31, Math.max(1, Math.floor(schedule?.monthDay ?? 1)));
+  const month = Math.min(12, Math.max(1, Math.floor(schedule?.month ?? 1)));
+
+  const now = new Date(fromMs);
+
+  if (frequency === 'daily') {
+    const candidate = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      hour,
+      minute,
+      0,
+      0
+    );
+    if (candidate.getTime() <= fromMs) {
+      candidate.setDate(candidate.getDate() + 1);
+    }
+    return candidate.getTime();
+  }
+
+  if (frequency === 'weekly') {
+    const diffDays = (weekday - now.getDay() + 7) % 7;
+    const candidate = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + diffDays,
+      hour,
+      minute,
+      0,
+      0
+    );
+    if (candidate.getTime() <= fromMs) {
+      candidate.setDate(candidate.getDate() + 7);
+    }
+    return candidate.getTime();
+  }
+
+  if (frequency === 'monthly') {
+    let year = now.getFullYear();
+    let month0 = now.getMonth();
+    let day = Math.min(monthDay, getDaysInMonth(year, month0));
+    let candidate = new Date(year, month0, day, hour, minute, 0, 0);
+    if (candidate.getTime() <= fromMs) {
+      month0 += 1;
+      if (month0 > 11) {
+        month0 = 0;
+        year += 1;
+      }
+      day = Math.min(monthDay, getDaysInMonth(year, month0));
+      candidate = new Date(year, month0, day, hour, minute, 0, 0);
+    }
+    return candidate.getTime();
+  }
+
+  // yearly
+  let year = now.getFullYear();
+  const targetMonth0 = month - 1;
+  let day = Math.min(monthDay, getDaysInMonth(year, targetMonth0));
+  let candidate = new Date(year, targetMonth0, day, hour, minute, 0, 0);
+  if (candidate.getTime() <= fromMs) {
+    year += 1;
+    day = Math.min(monthDay, getDaysInMonth(year, targetMonth0));
+    candidate = new Date(year, targetMonth0, day, hour, minute, 0, 0);
+  }
+  return candidate.getTime();
+}
+
+const HANDLE_DB_NAME = 'folio_backup_handles_db';
+const HANDLE_STORE_NAME = 'handles';
+const FIXED_DIR_KEY = 'fixed_backup_dir';
+
+interface BrowserDirHandleLike {
+  name: string;
+  queryPermission?: (opts?: { mode?: 'read' | 'readwrite' }) => Promise<'granted' | 'denied' | 'prompt'>;
+  requestPermission?: (opts?: { mode?: 'read' | 'readwrite' }) => Promise<'granted' | 'denied' | 'prompt'>;
+  getFileHandle: (
+    name: string,
+    opts?: { create?: boolean }
+  ) => Promise<{
+    createWritable: () => Promise<{
+      write: (data: Blob | string) => Promise<void>;
+      close: () => Promise<void>;
+    }>;
+  }>;
+}
+
+export function isDirectoryPickerSupported(): boolean {
+  return (
+    !Capacitor.isNativePlatform() &&
+    typeof window !== 'undefined' &&
+    typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker === 'function'
+  );
+}
+
+function openHandleDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(HANDLE_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(HANDLE_STORE_NAME)) {
+        db.createObjectStore(HANDLE_STORE_NAME);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function readSavedDirHandle(): Promise<BrowserDirHandleLike | null> {
+  try {
+    const db = await openHandleDatabase();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(HANDLE_STORE_NAME, 'readonly');
+      const req = tx.objectStore(HANDLE_STORE_NAME).get(FIXED_DIR_KEY);
+      req.onsuccess = () => resolve((req.result as BrowserDirHandleLike) || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function writeSavedDirHandle(handle: BrowserDirHandleLike | null): Promise<void> {
+  try {
+    const db = await openHandleDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(HANDLE_STORE_NAME, 'readwrite');
+      const store = tx.objectStore(HANDLE_STORE_NAME);
+      if (handle) {
+        store.put(handle, FIXED_DIR_KEY);
+      } else {
+        store.delete(FIXED_DIR_KEY);
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    // Ignore storage handle persistence failures
+  }
+}
+
+export async function pickFixedBackupDirectory(): Promise<{ name: string } | null> {
+  if (!isDirectoryPickerSupported()) return null;
+  const picker = (
+    window as unknown as {
+      showDirectoryPicker: (opts?: { mode?: 'read' | 'readwrite' }) => Promise<BrowserDirHandleLike>;
+    }
+  ).showDirectoryPicker;
+  const handle = await picker({ mode: 'readwrite' });
+  if (!handle) return null;
+  if (handle.requestPermission) {
+    const perm = await handle.requestPermission({ mode: 'readwrite' });
+    if (perm !== 'granted') return null;
+  }
+  await writeSavedDirHandle(handle);
+  return { name: handle.name };
+}
+
+export async function getFixedBackupDirectoryName(): Promise<string | null> {
+  const handle = await readSavedDirHandle();
+  return handle?.name || null;
+}
+
+export async function clearFixedBackupDirectory(): Promise<void> {
+  await writeSavedDirHandle(null);
+}
+
+async function tryWriteToFixedDirectory(
+  filename: string,
+  data: Blob | string
+): Promise<string | null> {
+  try {
+    const handle = await readSavedDirHandle();
+    if (!handle) return null;
+    if (handle.queryPermission) {
+      const perm = await handle.queryPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') return null;
+    }
+    const fileHandle = await handle.getFileHandle(filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(data);
+    await writable.close();
+    return handle.name;
+  } catch {
+    return null;
+  }
+}
+
 export interface BackupExportOptions {
   onProgress?: (label: string, percent: number) => void;
   yieldHook?: () => Promise<void>;
+  preferFixedFolder?: boolean;
 }
 
 const defaultYield = () => new Promise<void>((r) => setTimeout(r, 0));
@@ -563,8 +795,22 @@ export async function exportCrossPlatformZipBackup(
       options?.onProgress?.(`正在壓縮備份封包 (${Math.round(meta.percent)}%)...`, pct);
     }
   );
-  options?.onProgress?.('正在準備下載備份檔...', 98);
+  options?.onProgress?.('正在寫入備份檔案...', 97);
   await yieldStep();
+
+  if (options?.preferFixedFolder) {
+    const folderName = await tryWriteToFixedDirectory(filename, blob);
+    if (folderName) {
+      exportCache.notifyUpdated();
+      options?.onProgress?.('ZIP 備份已儲存至指定資料夾', 100);
+      return {
+        filename,
+        locationLabel: `指定資料夾 / ${folderName}/${filename}`,
+        byteSize: blob.size,
+      };
+    }
+  }
+
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -647,7 +893,19 @@ export async function exportFullBackup(
     }
   }
 
-  // Web / Browser offline download
+  // Web / Browser offline save (prefer bound fixed folder when configured, else browser Downloads)
+  if (options?.preferFixedFolder) {
+    const folderName = await tryWriteToFixedDirectory(filename, json);
+    if (folderName) {
+      exportCache.notifyUpdated();
+      return {
+        filename,
+        locationLabel: `指定資料夾 / ${folderName}/${filename}`,
+        byteSize,
+      };
+    }
+  }
+
   const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

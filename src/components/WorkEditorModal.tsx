@@ -664,7 +664,7 @@ export const WorkEditorModal: React.FC<WorkEditorModalProps> = ({
 
   const handleTogglePrivate = () => {
     if (!isPrivate && !hasPin) {
-      setError('請先設定 4 位數隱私密碼，才能啟用作品加密鎖定。');
+      setError('請先設定 4～8 位隱私密碼，才能啟用作品加密鎖定。');
       onRequestSetupPin();
       return;
     }
@@ -998,9 +998,7 @@ export const WorkEditorModal: React.FC<WorkEditorModalProps> = ({
                           key={g.id}
                           type="button"
                           onClick={() => handleSelectGenre(g.id)}
-                          className={`group relative p-2.5 sm:p-3 rounded-xl border text-left transition-all duration-150 flex flex-col justify-between ${
-                            conciseCopyMode ? 'min-h-[44px]' : 'min-h-[58px] sm:min-h-[64px]'
-                          } active:scale-[0.98] ${
+                          className={`group relative p-2.5 sm:p-3 rounded-xl border text-left transition-all duration-150 flex flex-col justify-between min-h-[58px] sm:min-h-[64px] active:scale-[0.98] ${
                             isSelected
                               ? 'bg-[#284152] dark:bg-[#E7E5E0] border-transparent text-white dark:text-stone-900 shadow-sm ring-2 ring-[#284152]/20 dark:ring-white/20'
                               : 'bg-white dark:bg-[#222220] border-stone-200/90 dark:border-stone-800 text-stone-700 dark:text-stone-300 hover:border-stone-400 dark:hover:border-stone-600 hover:bg-stone-50 dark:hover:bg-[#272725]'
@@ -1010,29 +1008,25 @@ export const WorkEditorModal: React.FC<WorkEditorModalProps> = ({
                             <span className="font-editorial text-xs sm:text-sm font-semibold tracking-wide">
                               {g.name}
                             </span>
-                            {!conciseCopyMode && (
-                              <span
-                                className={`text-[9px] px-1 py-0.5 rounded font-mono uppercase tracking-wider shrink-0 ${
-                                  isSelected
-                                    ? 'bg-white/20 dark:bg-stone-900/20 text-white dark:text-stone-900'
-                                    : 'bg-stone-100 dark:bg-stone-800 text-stone-400 dark:text-stone-500 group-hover:text-stone-600 dark:group-hover:text-stone-300'
-                                }`}
-                              >
-                                {g.sub}
-                              </span>
-                            )}
-                          </div>
-                          {!conciseCopyMode && (
                             <span
-                              className={`text-[10px] sm:text-[11px] mt-1 truncate ${
+                              className={`text-[9px] px-1 py-0.5 rounded font-mono uppercase tracking-wider shrink-0 ${
                                 isSelected
-                                  ? 'text-white/80 dark:text-stone-800/80 font-normal'
-                                  : 'text-stone-400 dark:text-stone-500'
+                                  ? 'bg-white/20 dark:bg-stone-900/20 text-white dark:text-stone-900'
+                                  : 'bg-stone-100 dark:bg-stone-800 text-stone-400 dark:text-stone-500 group-hover:text-stone-600 dark:group-hover:text-stone-300'
                               }`}
                             >
-                              {g.desc}
+                              {g.sub}
                             </span>
-                          )}
+                          </div>
+                          <span
+                            className={`text-[10px] sm:text-[11px] mt-1 truncate ${
+                              isSelected
+                                ? 'text-white/80 dark:text-stone-800/80 font-normal'
+                                : 'text-stone-400 dark:text-stone-500'
+                            }`}
+                          >
+                            {g.desc}
+                          </span>
                         </button>
                       );
                     })}

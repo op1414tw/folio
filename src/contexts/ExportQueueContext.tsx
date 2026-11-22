@@ -97,6 +97,15 @@ export const ExportQueueProvider: React.FC<{ children: React.ReactNode }> = ({ c
     };
   }, []);
 
+  useEffect(() => {
+    if (!lastNotice) return;
+    const noticeId = lastNotice.id;
+    const timer = window.setTimeout(() => {
+      setLastNotice((prev) => (prev && prev.id === noticeId ? null : prev));
+    }, 15000);
+    return () => window.clearTimeout(timer);
+  }, [lastNotice]);
+
   const syncQueueState = useCallback(() => {
     if (!mountedRef.current) return;
     setQueuedTasks(

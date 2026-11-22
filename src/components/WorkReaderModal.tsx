@@ -28,6 +28,7 @@ import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { useExportQueue } from '../contexts/ExportQueueContext';
 import { useMotionPreferences } from '../contexts/MotionConfigContext';
+import { useBackHandler } from '../hooks/useBackHandler';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { hasMarkdownSyntax } from '../services/markdown';
 import { exportWorksAsPdfEbook } from '../services/pdfEbook';
@@ -445,6 +446,11 @@ export const WorkReaderModal: React.FC<WorkReaderModalProps> = ({
   const [comfortConfig, setComfortConfig] = useState<ReaderComfortConfig>(loadReaderComfort);
   const [comfortMenuOpen, setComfortMenuOpen] = useState(false);
   const [zoomed, setZoomed] = useState(false);
+  useBackHandler(Boolean(work), () => {
+    setZoomed(false);
+    onClose();
+  });
+  useBackHandler(Boolean(work) && comfortMenuOpen, () => setComfortMenuOpen(false));
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [readingProgress, setReadingProgress] = useState(0);
   const [isScrollable, setIsScrollable] = useState(false);
@@ -987,21 +993,21 @@ export const WorkReaderModal: React.FC<WorkReaderModalProps> = ({
       <motion.div
         initial={
           animationOverhaul
-            ? { opacity: 0, y: 24 }
+            ? { opacity: 0, y: 18 }
             : { opacity: 0 }
         }
         animate={{ opacity: 1, y: 0 }}
         exit={
           animationOverhaul
-            ? { opacity: 0, y: 20 }
+            ? { opacity: 0, y: 16 }
             : { opacity: 0 }
         }
         transition={
           animationOverhaul
-            ? { duration: 0.26, ease: [0.22, 1, 0.36, 1] }
+            ? { duration: 0.22, ease: [0.22, 1, 0.36, 1] }
             : { duration: 0.16 }
         }
-        className="fixed inset-0 z-50 bg-[#F7F6F2] dark:bg-[#111110] flex flex-col overflow-hidden"
+        className="fixed inset-0 z-50 bg-[#F7F6F2] dark:bg-[#111110] flex flex-col overflow-hidden will-change-[transform,opacity]"
       >
         {/* Sticky Top Bar */}
         <header className="pt-safe shrink-0 border-b border-stone-200/80 dark:border-stone-800/80 bg-[#F7F6F2] dark:bg-[#111110]">

@@ -481,11 +481,11 @@ export const CollectionsManager: React.FC<CollectionsManagerProps> = ({
           <h2 className="font-editorial text-2xl sm:text-3xl font-semibold text-stone-900 dark:text-stone-100">
             作品集整理與子分類
           </h2>
-          {!conciseCopyMode && (
-            <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">
-              依主題建立作品集與專屬子分類；拖曳卡片握把可調整顯示順序或將常用作品集置頂。
-            </p>
-          )}
+          <p className="text-sm text-stone-500 dark:text-stone-400 mt-1">
+            {conciseCopyMode
+              ? `共 ${collections.length} 個作品集 · 可拖曳調整順序與子分類`
+              : '依主題建立作品集與專屬子分類；拖曳卡片握把可調整顯示順序或將常用作品集置頂。'}
+          </p>
         </div>
 
         <div className="flex items-center justify-end gap-2 self-stretch sm:self-auto shrink-0">
